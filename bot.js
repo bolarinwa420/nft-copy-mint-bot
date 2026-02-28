@@ -54,8 +54,8 @@ async function askApproval({ mintId, usdCost, ethAmount, maxUsd, contract, whale
   await bot.api.sendMessage(
     chatId,
     `⚠️ *Mint Price Above Limit!*\n\n` +
-    `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
-    `Contract: \`${contract.slice(0, 6)}...${contract.slice(-4)}\`\n` +
+    `Whale: \`${whale}\`\n` +
+    `Contract: \`${contract}\`\n` +
     `Price: ${ethAmount} ETH (*$${usdCost}*)\n` +
     `Your limit: $${maxUsd}\n\n` +
     `Proceed with mint? _(auto-skips in 2 minutes)_`,
