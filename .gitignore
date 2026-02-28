@@ -1,3 +1,6 @@
 .env
 node_modules/
 db.json
+wallet-keys.txt
+wallet-full.txt
+wallet-addresses.txt

@@ -3,6 +3,7 @@ import { JSONFilePreset } from "lowdb/node";
 const defaultData = {
   tracked: [],       // whale wallet addresses
   wallets: [],       // sub-wallets: [{ address, encryptedPk }]
+  groups: {},        // wallet groups: { groupName: [walletIndex, ...] }
   settings: {
     autoMint: false,
     mevShield: true,
@@ -66,6 +67,36 @@ export async function removeSubWallet(address) {
 
 export function getSubWallets() {
   return db.data.wallets;
+}
+
+// --- Groups ---
+
+export async function createGroup(name, fromIndex, toIndex) {
+  if (!db.data.groups) db.data.groups = {};
+  const indices = [];
+  for (let i = fromIndex; i <= toIndex; i++) indices.push(i);
+  db.data.groups[name.toLowerCase()] = indices;
+  await db.write();
+}
+
+export async function deleteGroup(name) {
+  if (db.data.groups) {
+    delete db.data.groups[name.toLowerCase()];
+    await db.write();
+  }
+}
+
+export function getGroups() {
+  return db.data.groups || {};
+}
+
+export function getGroupWallets(name) {
+  const groups = db.data.groups || {};
+  const indices = groups[name.toLowerCase()];
+  if (!indices) return null;
+  return indices
+    .map(i => db.data.wallets[i])
+    .filter(Boolean);
 }
 
 // --- Settings ---

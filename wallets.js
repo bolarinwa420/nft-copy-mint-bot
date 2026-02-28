@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { addSubWallet, removeSubWallet, getSubWallets } from "./storage.js";
+import { addSubWallet, removeSubWallet, getSubWallets, getGroupWallets } from "./storage.js";
 
 // Simple XOR "encryption" for local storage — not military grade but keeps raw keys out of plaintext
 function xorEncode(text, key) {
@@ -51,10 +51,12 @@ export function getAllSigners(provider) {
   });
 }
 
-// Send ETH from main wallet to all sub-wallets
-export async function distributeGas(mainSigner, amountEth) {
-  const wallets = getSubWallets();
-  if (wallets.length === 0) throw new Error("No sub-wallets to distribute to");
+// Send ETH from main wallet to sub-wallets (all or specific group)
+export async function distributeGas(mainSigner, amountEth, groupName = null) {
+  const wallets = groupName ? getGroupWallets(groupName) : getSubWallets();
+  if (!wallets || wallets.length === 0) {
+    throw new Error(groupName ? `Group "${groupName}" not found or empty` : "No sub-wallets to distribute to");
+  }
 
   const value = ethers.parseEther(amountEth);
   const results = [];

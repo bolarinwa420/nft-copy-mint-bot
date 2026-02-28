@@ -1,10 +1,10 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
-import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings } from "./storage.js";
+import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets } from "./storage.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs } from "./wallets.js";
 import { initTracker, startTracking, restartTracking } from "./tracker.js";
-import { initCopyMint } from "./copymint.js";
+import { initCopyMint, resolveApproval } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -42,9 +42,30 @@ async function notify(text, txHash) {
   }
 }
 
+// Approval prompt — sent when mint price exceeds limit
+async function askApproval({ mintId, usdCost, ethAmount, maxUsd, contract, whale }) {
+  const chatId = getSettings().alertChatId || process.env.ALERT_CHAT_ID;
+  if (!chatId) return;
+
+  const kb = new InlineKeyboard()
+    .text("✅ Mint It", `approve_mint_${mintId}`)
+    .text("❌ Skip", `skip_mint_${mintId}`);
+
+  await bot.api.sendMessage(
+    chatId,
+    `⚠️ *Mint Price Above Limit!*\n\n` +
+    `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
+    `Contract: \`${contract.slice(0, 6)}...${contract.slice(-4)}\`\n` +
+    `Price: ${ethAmount} ETH (*$${usdCost}*)\n` +
+    `Your limit: $${maxUsd}\n\n` +
+    `Proceed with mint? _(auto-skips in 2 minutes)_`,
+    { parse_mode: "Markdown", reply_markup: kb }
+  );
+}
+
 // Init subsystems
 initTracker(process.env.ALCHEMY_API_KEY);
-await initCopyMint(provider, mainSigner, notify);
+await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
 await startTracking();
 
@@ -110,9 +131,13 @@ bot.command("start", async (ctx) => {
     `/wallets — list sub-wallets\n` +
     `/addwallet <privkey> — add sub-wallet\n` +
     `/removewallet <address> — remove sub-wallet\n` +
-    `/distribute <eth> — send ETH to all sub-wallets\n` +
+    `/distribute <eth> [group] — send ETH to all or one group\n` +
     `/sweepgas — pull ETH back to main wallet\n` +
     `/sweepnfts <contract> — sweep NFTs to main wallet\n` +
+    `/creategroup <name> <from> <to> — assign wallet range to a person\n` +
+    `/groups — list all groups\n` +
+    `/groupwallets <name> — show wallets in a group\n` +
+    `/deletegroup <name> — remove a group\n` +
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
     `/setmaxmint <eth> — set max copy-mint value\n` +
@@ -168,11 +193,11 @@ bot.command("tracked", async (ctx) => {
   });
 });
 
-// Upload .txt file of addresses
+// Upload .txt file — auto-detects private keys vs whale addresses
 bot.on("message:document", async (ctx) => {
   const doc = ctx.message.document;
   if (!doc.file_name?.endsWith(".txt")) {
-    return ctx.reply("Upload a .txt file with one wallet address per line.");
+    return ctx.reply("Upload a .txt file.\n• One private key per line → imports as sub-wallets\n• One address per line → imports as tracked whales");
   }
 
   const file = await ctx.getFile();
@@ -181,17 +206,52 @@ bot.on("message:document", async (ctx) => {
   const res = await fetch(url);
   const text = await res.text();
 
-  const lines = text
-    .split("\n")
-    .map(l => l.trim())
-    .filter(l => isValidAddress(l));
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  if (lines.length === 0) {
-    return ctx.reply("No valid addresses found in the file.");
+  const isPrivateKey = (s) => /^(0x)?[0-9a-fA-F]{64}$/.test(s);
+  const isAddress = (s) => isValidAddress(s);
+
+  const privateKeys = lines.filter(isPrivateKey);
+  const addresses = lines.filter(isAddress);
+
+  // Private keys take priority if found
+  if (privateKeys.length > 0) {
+    await ctx.reply(`🔑 Found ${privateKeys.length} private key(s). Importing wallets...`);
+
+    let added = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const pk of privateKeys) {
+      try {
+        const normalizedPk = pk.startsWith("0x") ? pk : `0x${pk}`;
+        await addWallet(normalizedPk);
+        added++;
+      } catch (err) {
+        failed++;
+        errors.push(err.message);
+      }
+    }
+
+    // Delete the message containing private keys immediately
+    try { await ctx.deleteMessage(); } catch {}
+
+    const total = listWallets().length;
+    let msg = `💼 *Wallet Import Successful!*\n\nAdded ${added} new wallet(s).\nFailed: ${failed}\nTotal Wallets: ${total}`;
+    if (errors.length > 0) {
+      const unique = [...new Set(errors)];
+      msg += `\n\n_Errors: ${unique.join(", ")}_`;
+    }
+    return ctx.reply(msg, { parse_mode: "Markdown" });
+  }
+
+  // Otherwise treat as whale addresses
+  if (addresses.length === 0) {
+    return ctx.reply("No valid addresses or private keys found in the file.");
   }
 
   let added = 0;
-  for (const addr of lines) {
+  for (const addr of addresses) {
     await addTracked(addr);
     added++;
   }
@@ -258,15 +318,24 @@ bot.command("removewallet", async (ctx) => {
 });
 
 bot.command("distribute", async (ctx) => {
-  const amount = ctx.match?.trim();
+  const parts = ctx.match?.trim().split(/\s+/);
+  const amount = parts?.[0];
+  const groupName = parts?.[1] || null;
+
   if (!amount || isNaN(parseFloat(amount))) {
-    return ctx.reply("Usage: /distribute 0.01\n(sends that many ETH to each sub-wallet)");
+    return ctx.reply(
+      "Usage:\n" +
+      "`/distribute 0.01` — send to ALL wallets\n" +
+      "`/distribute 0.01 mine` — send to group only",
+      { parse_mode: "Markdown" }
+    );
   }
 
-  await ctx.reply(`📤 Distributing ${amount} ETH to all sub-wallets...`);
+  const target = groupName ? `group *${groupName}*` : "all sub-wallets";
+  await ctx.reply(`📤 Distributing ${amount} ETH to ${target}...`, { parse_mode: "Markdown" });
 
   try {
-    const results = await distributeGas(mainSigner, amount);
+    const results = await distributeGas(mainSigner, amount, groupName);
     const ok = results.filter(r => r.status === "sent").length;
     const fail = results.filter(r => r.status === "failed").length;
 
@@ -282,6 +351,125 @@ bot.command("distribute", async (ctx) => {
   } catch (err) {
     await ctx.reply(`❌ ${err.message}`);
   }
+});
+
+// ─── Wallet Groups ────────────────────────────────────────────────────────────
+
+bot.command("creategroup", async (ctx) => {
+  const parts = ctx.match?.trim().split(/\s+/);
+  if (!parts || parts.length !== 3) {
+    return ctx.reply(
+      "Usage: `/creategroup <name> <from> <to>`\n\nExample:\n`/creategroup mine 1 30` — assigns wallets 1–30 to group 'mine'\n`/creategroup alice 31 50` — assigns wallets 31–50 to 'alice'",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const [name, fromStr, toStr] = parts;
+  const from = parseInt(fromStr) - 1; // convert to 0-index
+  const to = parseInt(toStr) - 1;
+  const totalWallets = listWallets().length;
+
+  if (isNaN(from) || isNaN(to) || from < 0 || to >= totalWallets || from > to) {
+    return ctx.reply(`❌ Invalid range. You have wallets 1–${totalWallets}.`);
+  }
+
+  await createGroup(name, from, to);
+  const count = to - from + 1;
+  await ctx.reply(
+    `✅ Group *${name}* created\n\nWallets: ${fromStr}–${toStr} (${count} wallets)`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("groups", async (ctx) => {
+  const groups = getGroups();
+  const names = Object.keys(groups);
+
+  if (names.length === 0) {
+    return ctx.reply(
+      "No groups yet.\n\nCreate one with:\n`/creategroup mine 1 30`",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const totalWallets = listWallets().length;
+  const assigned = new Set(Object.values(groups).flat());
+  const unassigned = totalWallets - assigned.size;
+
+  const list = names.map(n => {
+    const indices = groups[n];
+    const first = Math.min(...indices) + 1;
+    const last = Math.max(...indices) + 1;
+    return `• *${n}*: wallets ${first}–${last} (${indices.length} wallets)`;
+  }).join("\n");
+
+  await ctx.reply(
+    `👥 *Wallet Groups:*\n\n${list}\n\n_Unassigned: ${unassigned} wallets_`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("deletegroup", async (ctx) => {
+  const name = ctx.match?.trim();
+  if (!name) return ctx.reply("Usage: /deletegroup <name>");
+  await deleteGroup(name);
+  await ctx.reply(`✅ Group *${name}* deleted`, { parse_mode: "Markdown" });
+});
+
+bot.command("groupwallets", async (ctx) => {
+  const name = ctx.match?.trim();
+  if (!name) return ctx.reply("Usage: /groupwallets <name>");
+
+  const wallets = getGroupWallets(name);
+  if (!wallets || wallets.length === 0) {
+    return ctx.reply(`❌ Group "${name}" not found or empty.`);
+  }
+
+  const list = wallets.map((w, i) => `${i + 1}. \`${shortAddr(w.address)}\``).join("\n");
+  await ctx.reply(
+    `👥 *Group: ${name}* (${wallets.length} wallets)\n\n${list}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("groupbalance", async (ctx) => {
+  const name = ctx.match?.trim();
+  if (!name) {
+    return ctx.reply("Usage: `/groupbalance <name>`\nExample: `/groupbalance mine`", { parse_mode: "Markdown" });
+  }
+
+  const wallets = getGroupWallets(name);
+  if (!wallets || wallets.length === 0) {
+    return ctx.reply(`❌ Group "${name}" not found or empty.`);
+  }
+
+  await ctx.reply(`🔍 Fetching balances for group *${name}*...`, { parse_mode: "Markdown" });
+
+  const balances = await Promise.all(
+    wallets.map(async (w) => {
+      try {
+        const bal = await provider.getBalance(w.address);
+        return { address: w.address, eth: parseFloat(ethers.formatEther(bal)) };
+      } catch {
+        return { address: w.address, eth: 0 };
+      }
+    })
+  );
+
+  const total = balances.reduce((sum, w) => sum + w.eth, 0);
+  const empty = balances.filter(w => w.eth === 0).length;
+  const funded = balances.filter(w => w.eth > 0).length;
+
+  const list = balances
+    .map((w, i) => `${i + 1}. \`${shortAddr(w.address)}\` — ${w.eth.toFixed(6)} ETH`)
+    .join("\n");
+
+  await ctx.reply(
+    `💼 *Group: ${name} — Balances*\n\n${list}\n\n` +
+    `*Total: ${total.toFixed(6)} ETH*\n` +
+    `Funded: ${funded} | Empty: ${empty}`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 bot.command("sweepgas", async (ctx) => {
@@ -353,10 +541,10 @@ bot.command("jobs", async (ctx) => {
 bot.command("setmaxmint", async (ctx) => {
   const val = ctx.match?.trim();
   if (!val || isNaN(parseFloat(val))) {
-    return ctx.reply("Usage: /setmaxmint 0.5");
+    return ctx.reply("Usage: `/setmaxmint 0.15`\n\nSets the max price per NFT in USD.\nFree mints always go through automatically.", { parse_mode: "Markdown" });
   }
-  await updateSettings({ maxMintEth: val });
-  await ctx.reply(`✅ Max copy-mint value set to ${val} ETH`);
+  await updateSettings({ maxMintUsd: val });
+  await ctx.reply(`✅ Max mint price set to *$${val} USD* per NFT\n\nFree mints → auto\nUnder $${val} → auto\nOver $${val} → asks you`, { parse_mode: "Markdown" });
 });
 
 // ─── Text handler (schedule flow + fallback) ─────────────────────────────────
@@ -437,6 +625,36 @@ bot.on("message:text", async (ctx) => {
       await ctx.reply(`❌ Failed to schedule: ${err.message}`);
     }
   }
+});
+
+// ─── Mint Approval Callbacks ─────────────────────────────────────────────────
+
+bot.callbackQuery(/^approve_mint_(.+)$/, async (ctx) => {
+  const mintId = ctx.match[1];
+  const resolved = resolveApproval(mintId, true);
+  if (resolved) {
+    await ctx.editMessageText(
+      ctx.message?.text + "\n\n✅ *Approved — minting now...*",
+      { parse_mode: "Markdown" }
+    );
+  } else {
+    await ctx.editMessageText("⏰ Too late — this mint already timed out.");
+  }
+  await ctx.answerCallbackQuery("Minting!");
+});
+
+bot.callbackQuery(/^skip_mint_(.+)$/, async (ctx) => {
+  const mintId = ctx.match[1];
+  const resolved = resolveApproval(mintId, false);
+  if (resolved) {
+    await ctx.editMessageText(
+      ctx.message?.text + "\n\n⏭️ *Skipped.*",
+      { parse_mode: "Markdown" }
+    );
+  } else {
+    await ctx.editMessageText("⏰ Too late — this mint already timed out.");
+  }
+  await ctx.answerCallbackQuery("Skipped");
 });
 
 // ─── Inline Keyboard Callbacks ────────────────────────────────────────────────

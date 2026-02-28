@@ -2,21 +2,48 @@ import { ethers } from "ethers";
 import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 import { getSettings } from "./storage.js";
 import { mintEvents } from "./tracker.js";
+import { v4 as uuidv4 } from "uuid";
 
 let provider;
 let mainSigner;
 let flashbotsProvider;
-let telegramNotify; // injected from bot.js
+let telegramNotify;    // injected from bot.js — sends plain alerts
+let telegramAskApproval; // injected from bot.js — sends approval prompt with buttons
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
+const MAX_MINT_USD = 0.15;       // default max per NFT in USD
+const APPROVAL_TIMEOUT_MS = 120000; // 2 minutes to respond
 
-export async function initCopyMint(ethProvider, signer, notifyFn) {
+// Pending approvals waiting for user response: mintId → { resolve, reject, timer }
+const pendingApprovals = new Map();
+
+// ETH price cache
+let cachedEthPrice = null;
+let priceLastFetched = 0;
+
+async function getEthUsdPrice() {
+  const now = Date.now();
+  if (cachedEthPrice && now - priceLastFetched < 60000) return cachedEthPrice;
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+    );
+    const data = await res.json();
+    cachedEthPrice = data.ethereum.usd;
+    priceLastFetched = now;
+    return cachedEthPrice;
+  } catch {
+    return cachedEthPrice || 2000; // fallback if API is down
+  }
+}
+
+export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn) {
   provider = ethProvider;
   mainSigner = signer;
   telegramNotify = notifyFn;
+  telegramAskApproval = askApprovalFn;
 
-  // Initialize Flashbots with a random auth signer (just for signing bundles, not for funds)
   const authSigner = ethers.Wallet.createRandom();
   try {
     flashbotsProvider = await FlashbotsBundleProvider.create(
@@ -29,43 +56,87 @@ export async function initCopyMint(ethProvider, signer, notifyFn) {
     console.warn("[CopyMint] Flashbots init failed:", err.message);
   }
 
-  // Listen for mint events from tracker
   mintEvents.on("mintDetected", handleMintDetected);
   console.log("[CopyMint] Listening for whale mints...");
 }
 
 async function handleMintDetected({ whale, contract, tx }) {
   const settings = getSettings();
+  const txValue = tx.value ? BigInt(tx.value) : 0n;
+  const ethPrice = await getEthUsdPrice();
+  const ethAmount = parseFloat(ethers.formatEther(txValue));
+  const usdCost = ethAmount * ethPrice;
+  const maxUsd = parseFloat(settings.maxMintUsd ?? MAX_MINT_USD);
 
-  // Always notify even if auto-mint is off
   const alertMsg =
     `🐋 *Whale Mint Detected!*\n\n` +
     `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
     `Contract: \`${contract.slice(0, 6)}...${contract.slice(-4)}\`\n` +
-    `Value: ${tx.value ? ethers.formatEther(BigInt(tx.value)) : "0"} ETH\n` +
-    `Auto-Mint: ${settings.autoMint ? "✅ Firing..." : "❌ Off"}`;
+    `Price: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
+    `Auto-Mint: ${settings.autoMint ? "✅ Checking..." : "❌ Off"}`;
 
   await telegramNotify(alertMsg);
-
   if (!settings.autoMint) return;
 
-  // Check max mint limit
-  const txValue = tx.value ? BigInt(tx.value) : 0n;
-  const maxWei = ethers.parseEther(settings.maxMintEth || "1.0");
-  if (txValue > maxWei) {
-    await telegramNotify(
-      `⚠️ Skipped — tx value ${ethers.formatEther(txValue)} ETH exceeds your max limit of ${settings.maxMintEth} ETH`
-    );
+  // Free mint — go immediately
+  if (txValue === 0n) {
+    await executeCopyMint(tx, settings.mevShield);
     return;
   }
 
-  await executeCopyMint(tx, settings.mevShield);
+  // Under limit — mint automatically
+  if (usdCost <= maxUsd) {
+    await telegramNotify(`✅ Price $${usdCost.toFixed(2)} is under $${maxUsd} limit — minting automatically...`);
+    await executeCopyMint(tx, settings.mevShield);
+    return;
+  }
+
+  // Over limit — ask for approval
+  const mintId = uuidv4();
+  await telegramAskApproval({
+    mintId,
+    usdCost: usdCost.toFixed(2),
+    ethAmount: ethAmount.toFixed(6),
+    maxUsd,
+    contract,
+    whale,
+  });
+
+  // Wait for user response (yes/no) or timeout
+  try {
+    const approved = await waitForApproval(mintId);
+    if (approved) {
+      await executeCopyMint(tx, settings.mevShield);
+    } else {
+      await telegramNotify(`⏭️ Mint skipped.`);
+    }
+  } catch {
+    await telegramNotify(`⏰ No response in 2 minutes — mint skipped automatically.`);
+  }
+}
+
+function waitForApproval(mintId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingApprovals.delete(mintId);
+      reject(new Error("timeout"));
+    }, APPROVAL_TIMEOUT_MS);
+
+    pendingApprovals.set(mintId, { resolve, reject, timer });
+  });
+}
+
+// Called from bot.js callback handlers
+export function resolveApproval(mintId, approved) {
+  const pending = pendingApprovals.get(mintId);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  pendingApprovals.delete(mintId);
+  pending.resolve(approved);
+  return true;
 }
 
 export async function executeCopyMint(whaleTx, useMevShield = true) {
-  const settings = getSettings();
-
-  // Build a copy of the whale's transaction
   const mintTx = {
     to: whaleTx.to,
     data: whaleTx.input || whaleTx.data || "0x",
@@ -77,7 +148,6 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
 
   try {
     let txHash;
-
     if (useMevShield && flashbotsProvider) {
       txHash = await sendViaFlashbots(mintTx);
     } else {
@@ -88,13 +158,11 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     const shortContract = `${mintTx.to.slice(0, 6)}...${mintTx.to.slice(-4)}`;
     await telegramNotify(
       `✅ *Copy Mint Successful!*\n\n` +
-      `🐋 Whale: followed\n` +
       `📄 Contract: \`${shortContract}\`\n` +
       `⛓️ Chain: Ethereum\n` +
       `💎 Minted to: \`${(await mainSigner.getAddress()).slice(0, 6)}...${(await mainSigner.getAddress()).slice(-4)}\``,
       txHash
     );
-
     return txHash;
   } catch (err) {
     console.error("[CopyMint] Failed:", err.message);
@@ -108,7 +176,6 @@ async function sendViaFlashbots(mintTx) {
 
   for (let attempt = 0; attempt < MAX_BLOCKS_TO_TRY; attempt++) {
     const targetBlock = currentBlock + 1 + attempt;
-
     const bundle = [
       {
         signer: mainSigner,
@@ -124,50 +191,32 @@ async function sendViaFlashbots(mintTx) {
 
     const signedBundle = await flashbotsProvider.signBundle(bundle);
     const simulation = await flashbotsProvider.simulate(signedBundle, targetBlock);
-
-    if ("error" in simulation) {
-      console.warn(`[Flashbots] Simulation error block ${targetBlock}:`, simulation.error.message);
-      continue;
-    }
+    if ("error" in simulation) continue;
 
     const submission = await flashbotsProvider.sendRawBundle(signedBundle, targetBlock);
-
-    if ("error" in submission) {
-      console.warn(`[Flashbots] Submission error block ${targetBlock}:`, submission.error.message);
-      continue;
-    }
+    if ("error" in submission) continue;
 
     const waitResult = await submission.wait();
-
     if (waitResult === 0) {
-      // BundleIncluded
       const receipts = await submission.receipts();
-      const txHash = receipts[0]?.transactionHash;
-      console.log(`[Flashbots] Bundle included in block ${targetBlock}, tx: ${txHash}`);
-      return txHash;
+      return receipts[0]?.transactionHash;
     }
-
-    console.log(`[Flashbots] Bundle not included in block ${targetBlock}, trying next...`);
   }
 
-  // Fallback to regular broadcast
-  console.log("[Flashbots] All blocks missed — falling back to normal broadcast");
   const sentTx = await mainSigner.sendTransaction(mintTx);
   return sentTx.hash;
 }
 
-// Manual mint by contract address (for scheduled mints)
 export async function mintByContract(contractAddress, data, value, signer) {
   const mintTx = {
     to: contractAddress,
-    data: data || "0x1249c58b", // default: mint()
+    data: data || "0x1249c58b",
     value: value ? ethers.parseEther(value) : 0n,
     gasLimit: 300000n,
   };
 
   const settings = getSettings();
   const signerToUse = signer || mainSigner;
-
   if (settings.mevShield && flashbotsProvider && signerToUse === mainSigner) {
     return sendViaFlashbots(mintTx);
   }
