@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 import { getSettings } from "./storage.js";
 import { mintEvents } from "./tracker.js";
+import { getAllSigners } from "./wallets.js";
 import { v4 as uuidv4 } from "uuid";
 
 let provider;
@@ -81,14 +82,20 @@ async function handleMintDetected({ whale, contract, tx }) {
 
   // Free mint — go immediately
   if (txValue === 0n) {
-    await executeCopyMint(tx, settings.mevShield);
+    await Promise.all([
+      executeCopyMint(tx, settings.mevShield),
+      executeSubWalletMints(tx),
+    ]);
     return;
   }
 
   // Under limit — mint automatically
   if (usdCost <= maxUsd) {
     await telegramNotify(`✅ Price $${usdCost.toFixed(2)} is under $${maxUsd} limit — minting automatically...`);
-    await executeCopyMint(tx, settings.mevShield);
+    await Promise.all([
+      executeCopyMint(tx, settings.mevShield),
+      executeSubWalletMints(tx),
+    ]);
     return;
   }
 
@@ -107,7 +114,10 @@ async function handleMintDetected({ whale, contract, tx }) {
   try {
     const approved = await waitForApproval(mintId);
     if (approved) {
-      await executeCopyMint(tx, settings.mevShield);
+      await Promise.all([
+        executeCopyMint(tx, settings.mevShield),
+        executeSubWalletMints(tx),
+      ]);
     } else {
       await telegramNotify(`⏭️ Mint skipped.`);
     }
@@ -170,6 +180,56 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     await telegramNotify(`❌ *Copy Mint Failed*\n\nError: ${err.message}`);
     throw err;
   }
+}
+
+async function executeSubWalletMints(whaleTx) {
+  const signers = getAllSigners(provider);
+  if (signers.length === 0) return;
+
+  const txValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
+  const GAS_BUFFER = ethers.parseEther("0.005");
+
+  // Filter only wallets with enough balance
+  const funded = (
+    await Promise.all(
+      signers.map(async (signer) => {
+        try {
+          const balance = await provider.getBalance(signer.address);
+          return balance >= txValue + GAS_BUFFER ? signer : null;
+        } catch {
+          return null;
+        }
+      })
+    )
+  ).filter(Boolean);
+
+  if (funded.length === 0) {
+    await telegramNotify(`💼 *Sub-Wallets:* 0 funded — skipped`);
+    return;
+  }
+
+  const mintTx = {
+    to: whaleTx.to,
+    data: whaleTx.input || whaleTx.data || "0x",
+    value: txValue,
+    gasLimit: whaleTx.gas
+      ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
+      : 300000n,
+  };
+
+  const results = await Promise.allSettled(
+    funded.map((signer) => signer.sendTransaction(mintTx))
+  );
+
+  const succeeded = results.filter((r) => r.status === "fulfilled").length;
+  const failed = results.filter((r) => r.status === "rejected").length;
+
+  await telegramNotify(
+    `💼 *Sub-Wallet Mints Complete*\n\n` +
+    `✅ Succeeded: ${succeeded}\n` +
+    `❌ Failed: ${failed}\n` +
+    `⏭️ Skipped (no balance): ${signers.length - funded.length}`
+  );
 }
 
 async function sendViaFlashbots(mintTx) {
