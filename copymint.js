@@ -73,6 +73,7 @@ async function handleMintDetected({ whale, contract, tx }) {
     `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
     `Contract: \`${contract.slice(0, 6)}...${contract.slice(-4)}\`\n` +
     `Price: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
+    `Chain: Ethereum\n` +
     `Auto-Mint: ${settings.autoMint ? "✅ Checking..." : "❌ Off"}`;
 
   await telegramNotify(alertMsg);
