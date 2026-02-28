@@ -32,10 +32,7 @@ export function initTracker(apiKey) {
 function isMintTx(tx) {
   if (!tx.input || tx.input === "0x") return false;
   const selector = tx.input.slice(0, 10).toLowerCase();
-  if (MINT_SELECTORS.has(selector)) return true;
-  // Also flag any tx sending ETH to a contract that isn't a known EOA transfer
-  if (tx.value && tx.value !== "0x0" && tx.to) return true;
-  return false;
+  return MINT_SELECTORS.has(selector);
 }
 
 export async function startTracking() {

@@ -19,6 +19,9 @@ const APPROVAL_TIMEOUT_MS = 120000; // 2 minutes to respond
 // Pending approvals waiting for user response: mintId → { resolve, reject, timer }
 const pendingApprovals = new Map();
 
+// Deduplication — ignore tx if already processed
+const processedTxHashes = new Set();
+
 // ETH price cache
 let cachedEthPrice = null;
 let priceLastFetched = 0;
@@ -62,6 +65,15 @@ export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn)
 }
 
 async function handleMintDetected({ whale, contract, tx }) {
+  // Dedup — same tx can fire twice on WebSocket reconnect
+  const txHash = tx.hash;
+  if (txHash && processedTxHashes.has(txHash)) return;
+  if (txHash) {
+    processedTxHashes.add(txHash);
+    // Clean up after 10 mins to prevent unbounded memory growth
+    setTimeout(() => processedTxHashes.delete(txHash), 10 * 60 * 1000);
+  }
+
   const settings = getSettings();
   const txValue = tx.value ? BigInt(tx.value) : 0n;
   const ethPrice = await getEthUsdPrice();
@@ -206,7 +218,17 @@ async function executeSubWalletMints(whaleTx) {
   if (signers.length === 0) return;
 
   const txValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
-  const GAS_BUFFER = ethers.parseEther("0.005");
+  // 0.015 ETH covers gas up to ~150 gwei on a 300k gas limit tx
+  const GAS_BUFFER = ethers.parseEther("0.015");
+
+  // Get current network gas fees so sub-wallets are competitive
+  const feeData = await provider.getFeeData();
+  const maxFeePerGas = feeData.maxFeePerGas
+    ? (feeData.maxFeePerGas * 120n) / 100n  // 20% above current to ensure inclusion
+    : ethers.parseUnits("50", "gwei");
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+    ? feeData.maxPriorityFeePerGas
+    : ethers.parseUnits("2", "gwei");
 
   // Filter only wallets with enough balance
   const funded = (
@@ -234,6 +256,9 @@ async function executeSubWalletMints(whaleTx) {
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
       : 300000n,
+    type: 2,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   };
 
   const results = await Promise.allSettled(
