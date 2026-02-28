@@ -343,7 +343,7 @@ bot.command("distribute", async (ctx) => {
     if (fail > 0) {
       const failList = results
         .filter(r => r.status === "failed")
-        .map(r => `• \`${shortAddr(r.address)}\`: ${r.error}`)
+        .map(r => `• \`${shortAddr(r.address)}\`: \`${String(r.error).slice(0, 60)}\``)
         .join("\n");
       msg += `\n\n*Failed:*\n${failList}`;
     }
