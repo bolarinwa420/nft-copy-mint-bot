@@ -425,7 +425,7 @@ bot.command("groupwallets", async (ctx) => {
     return ctx.reply(`❌ Group "${name}" not found or empty.`);
   }
 
-  const list = wallets.map((w, i) => `${i + 1}. \`${shortAddr(w.address)}\``).join("\n");
+  const list = wallets.map((w, i) => `${i + 1}. \`${w.address}\``).join("\n");
   await ctx.reply(
     `👥 *Group: ${name}* (${wallets.length} wallets)\n\n${list}`,
     { parse_mode: "Markdown" }
