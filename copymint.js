@@ -182,6 +182,25 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
   }
 }
 
+// Forces quantity to 1 in mint calldata.
+// Handles the two most common patterns:
+//   - mint()              → no args, already 1, return as-is
+//   - mint(uint256 qty)   → 4-byte selector + 32-byte arg → replace arg with 1
+// Anything more complex is left untouched.
+function buildSingleMintData(originalData) {
+  const data = originalData || "0x";
+  // No args (e.g. mint()) — already mints 1
+  if (data.length <= 10) return data;
+  // One uint256 arg (e.g. mint(uint256 quantity)) — force to 1
+  if (data.length === 74) {
+    const selector = data.slice(0, 10);
+    const encodedOne = "0000000000000000000000000000000000000000000000000000000000000001";
+    return selector + encodedOne;
+  }
+  // Complex calldata — use as-is
+  return data;
+}
+
 async function executeSubWalletMints(whaleTx) {
   const signers = getAllSigners(provider);
   if (signers.length === 0) return;
@@ -210,7 +229,7 @@ async function executeSubWalletMints(whaleTx) {
 
   const mintTx = {
     to: whaleTx.to,
-    data: whaleTx.input || whaleTx.data || "0x",
+    data: buildSingleMintData(whaleTx.input || whaleTx.data || "0x"),
     value: txValue,
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
