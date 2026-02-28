@@ -332,6 +332,29 @@ bot.command("distribute", async (ctx) => {
   }
 
   const target = groupName ? `group *${groupName}*` : "all sub-wallets";
+
+  // Preflight: check main wallet has enough for transfers + estimated gas
+  try {
+    const { getGroupWallets, getSubWallets } = await import("./storage.js");
+    const walletList = groupName ? getGroupWallets(groupName) : getSubWallets();
+    const count = walletList?.length || 0;
+    const amountWei = ethers.parseEther(amount);
+    const GAS_PER_TX = ethers.parseEther("0.0005"); // ~21k gas at 24 gwei
+    const totalNeeded = (amountWei + GAS_PER_TX) * BigInt(count);
+    const mainBalance = await provider.getBalance(MAIN_ADDRESS);
+
+    if (mainBalance < totalNeeded) {
+      const needed = parseFloat(ethers.formatEther(totalNeeded)).toFixed(6);
+      const have = parseFloat(ethers.formatEther(mainBalance)).toFixed(6);
+      return ctx.reply(
+        `❌ *Insufficient balance in main wallet*\n\n` +
+        `Need: ${needed} ETH\nHave: ${have} ETH\n\n` +
+        `Top up main wallet first: \`${MAIN_ADDRESS}\``,
+        { parse_mode: "Markdown" }
+      );
+    }
+  } catch {}
+
   await ctx.reply(`📤 Distributing ${amount} ETH to ${target}...`, { parse_mode: "Markdown" });
 
   try {
