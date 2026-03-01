@@ -156,6 +156,7 @@ bot.command("start", async (ctx) => {
     `/mintfilters — show whitelist/blacklist\n` +
     `/togglefreemints — allow/block free mints\n` +
     `/profits [contract] — mint profit tracker\n` +
+    `/history [page] — full mint transaction history\n` +
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
     `/setmaxmint <usd> — set max copy-mint price in USD\n` +
@@ -901,6 +902,89 @@ bot.command("profits", async (ctx) => {
     `\n\n─────────────────\n` +
     `*Total ETH Spent: ${totalEth.toFixed(4)} ETH ($${(totalEth * ethPrice).toFixed(2)})*`,
     { parse_mode: "Markdown" }
+  );
+});
+
+// ─── Mint History ─────────────────────────────────────────────────────────────
+
+bot.command("history", async (ctx) => {
+  const log = getMintLog();
+
+  if (log.length === 0) {
+    return ctx.reply("No mints logged yet. History starts recording from now.");
+  }
+
+  // Optional page number: /history 2
+  const page = Math.max(1, parseInt(ctx.match?.trim() || "1") || 1);
+  const PAGE_SIZE = 10;
+  const total = log.length;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  // Most recent first
+  const reversed = [...log].reverse();
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = reversed.slice(start, start + PAGE_SIZE);
+
+  if (slice.length === 0) {
+    return ctx.reply(`No entries on page ${page}. There are ${totalPages} page(s).`);
+  }
+
+  const lines = slice.map((entry, i) => {
+    const num = start + i + 1;
+    const date = new Date(entry.timestamp).toISOString().slice(0, 16).replace("T", " ");
+    const eth = entry.ethSpent > 0 ? `${entry.ethSpent.toFixed(5)} ETH` : "free";
+    return (
+      `*#${num}* — ${date} UTC\n` +
+      `Contract: \`${shortAddr(entry.contract)}\`\n` +
+      `Wallet: \`${shortAddr(entry.wallet)}\`\n` +
+      `Spent: ${eth}\n` +
+      `[View Tx](https://etherscan.io/tx/${entry.txHash})`
+    );
+  });
+
+  const kb = new InlineKeyboard();
+  if (page > 1) kb.text(`◀️ Page ${page - 1}`, `history_${page - 1}`);
+  if (page < totalPages) kb.text(`Page ${page + 1} ▶️`, `history_${page + 1}`);
+
+  await ctx.reply(
+    `📋 *Mint History* (${total} total — page ${page}/${totalPages})\n\n` +
+    lines.join("\n\n─────────────────\n\n"),
+    { parse_mode: "Markdown", reply_markup: kb, disable_web_page_preview: true }
+  );
+});
+
+bot.callbackQuery(/^history_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const page = parseInt(ctx.match[1]);
+  const log = getMintLog();
+  const PAGE_SIZE = 10;
+  const total = log.length;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const reversed = [...log].reverse();
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = reversed.slice(start, start + PAGE_SIZE);
+
+  const lines = slice.map((entry, i) => {
+    const num = start + i + 1;
+    const date = new Date(entry.timestamp).toISOString().slice(0, 16).replace("T", " ");
+    const eth = entry.ethSpent > 0 ? `${entry.ethSpent.toFixed(5)} ETH` : "free";
+    return (
+      `*#${num}* — ${date} UTC\n` +
+      `Contract: \`${shortAddr(entry.contract)}\`\n` +
+      `Wallet: \`${shortAddr(entry.wallet)}\`\n` +
+      `Spent: ${eth}\n` +
+      `[View Tx](https://etherscan.io/tx/${entry.txHash})`
+    );
+  });
+
+  const kb = new InlineKeyboard();
+  if (page > 1) kb.text(`◀️ Page ${page - 1}`, `history_${page - 1}`);
+  if (page < totalPages) kb.text(`Page ${page + 1} ▶️`, `history_${page + 1}`);
+
+  await ctx.editMessageText(
+    `📋 *Mint History* (${total} total — page ${page}/${totalPages})\n\n` +
+    lines.join("\n\n─────────────────\n\n"),
+    { parse_mode: "Markdown", reply_markup: kb, disable_web_page_preview: true }
   );
 });
 
