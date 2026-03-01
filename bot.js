@@ -1,10 +1,10 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
-import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets } from "./storage.js";
+import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog } from "./storage.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking } from "./tracker.js";
-import { initCopyMint, resolveApproval } from "./copymint.js";
+import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -85,6 +85,9 @@ function formatStatusMessage() {
   const wallets = listWallets();
   const on = "🟢";
   const off = "🔴";
+  const wl = settings.whitelist || [];
+  const bl = settings.blacklist || [];
+  const mintLog = getMintLog();
 
   return (
     `✅ *Status Update*\n\n` +
@@ -92,12 +95,17 @@ function formatStatusMessage() {
     `Tracker: ${tracked.length > 0 ? on : off}\n` +
     `Auto-Mint: ${settings.autoMint ? on + " ON" : off + " OFF"}\n` +
     `MEV Shield: ${settings.mevShield ? on + " ON" : off + " OFF"}\n` +
-    `Max Mint Limit: ${settings.maxMintEth} ETH\n\n` +
+    `Max Mint: $${settings.maxMintUsd || "0.15"} USD\n` +
+    `Free Mints: ${settings.allowFreeMints !== false ? on + " ON" : off + " OFF"}\n\n` +
+    `*Filters:*\n` +
+    `Whitelist: ${wl.length > 0 ? `${wl.length} contract(s)` : "All"}\n` +
+    `Blacklist: ${bl.length > 0 ? `${bl.length} blocked` : "None"}\n\n` +
     `*Network:*\n` +
     `Active Node: eth-mainnet.g.alchemy.com\n` +
     `Alert Chat: ${settings.alertChatId || process.env.ALERT_CHAT_ID || "not set"}\n` +
     `Total Wallets: ${wallets.length}\n` +
-    `Tracked Addresses: ${tracked.length}`
+    `Tracked Addresses: ${tracked.length}\n` +
+    `Total Mints Logged: ${mintLog.length}`
   );
 }
 
@@ -134,14 +142,23 @@ bot.command("start", async (ctx) => {
     `/distribute <eth> [group] — send ETH to all or one group\n` +
     `/sweepgas — pull ETH back to main wallet\n` +
     `/sweepnfts <contract> — sweep NFTs to main wallet\n` +
+    `/checkgas [min_eth] — show wallets with low gas\n` +
     `/creategroup <name> <from> <to> — assign wallet range to a person\n` +
     `/groups — list all groups\n` +
     `/groupwallets <name> — show wallets in a group\n` +
     `/groupprivatekey <name> — export private keys for a group (file)\n` +
     `/deletegroup <name> — remove a group\n` +
+    `/mint <contract> [group] [calldata] [value] — manual mint\n` +
+    `/whitelist <contract> — only auto-mint this contract\n` +
+    `/unwhitelist <contract> — remove from whitelist\n` +
+    `/blacklist <contract> — never auto-mint this contract\n` +
+    `/unblacklist <contract> — remove from blacklist\n` +
+    `/mintfilters — show whitelist/blacklist\n` +
+    `/togglefreemints — allow/block free mints\n` +
+    `/profits [contract] — mint profit tracker\n` +
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
-    `/setmaxmint <eth> — set max copy-mint value\n` +
+    `/setmaxmint <usd> — set max copy-mint price in USD\n` +
     `/setalertchat — set this chat as alert chat`,
     { parse_mode: "Markdown" }
   );
@@ -601,6 +618,290 @@ bot.command("setmaxmint", async (ctx) => {
   }
   await updateSettings({ maxMintUsd: val });
   await ctx.reply(`✅ Max mint price set to *$${val} USD* per NFT\n\nFree mints → auto\nUnder $${val} → auto\nOver $${val} → asks you`, { parse_mode: "Markdown" });
+});
+
+// ─── Mint Filters ─────────────────────────────────────────────────────────────
+
+bot.command("whitelist", async (ctx) => {
+  const contract = ctx.match?.trim();
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply("Usage: `/whitelist 0xContractAddress`\n\nOnly auto-mint whitelisted contracts (leave empty to mint all).", { parse_mode: "Markdown" });
+  }
+  await addToWhitelist(contract);
+  const wl = getSettings().whitelist || [];
+  await ctx.reply(
+    `✅ *Whitelisted:* \`${contract}\`\n\nOnly contracts on this list will auto-mint.\nWhitelist has ${wl.length} contract(s).\n\nUse /mintfilters to view all.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("unwhitelist", async (ctx) => {
+  const contract = ctx.match?.trim();
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply("Usage: `/unwhitelist 0xContractAddress`", { parse_mode: "Markdown" });
+  }
+  await removeFromWhitelist(contract);
+  await ctx.reply(`✅ Removed \`${shortAddr(contract)}\` from whitelist.`, { parse_mode: "Markdown" });
+});
+
+bot.command("blacklist", async (ctx) => {
+  const contract = ctx.match?.trim();
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply("Usage: `/blacklist 0xContractAddress`\n\nThis contract will always be skipped.", { parse_mode: "Markdown" });
+  }
+  await addToBlacklist(contract);
+  await ctx.reply(`🚫 *Blacklisted:* \`${contract}\`\n\nThis contract will never be auto-minted.`, { parse_mode: "Markdown" });
+});
+
+bot.command("unblacklist", async (ctx) => {
+  const contract = ctx.match?.trim();
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply("Usage: `/unblacklist 0xContractAddress`", { parse_mode: "Markdown" });
+  }
+  await removeFromBlacklist(contract);
+  await ctx.reply(`✅ Removed \`${shortAddr(contract)}\` from blacklist.`, { parse_mode: "Markdown" });
+});
+
+bot.command("mintfilters", async (ctx) => {
+  const settings = getSettings();
+  const wl = settings.whitelist || [];
+  const bl = settings.blacklist || [];
+
+  const wlText = wl.length > 0
+    ? wl.map(c => `• \`${c}\``).join("\n")
+    : "_None — all contracts allowed_";
+
+  const blText = bl.length > 0
+    ? bl.map(c => `• \`${c}\``).join("\n")
+    : "_None_";
+
+  await ctx.reply(
+    `🔍 *Mint Filters*\n\n` +
+    `*Whitelist* (${wl.length}) — only mint these:\n${wlText}\n\n` +
+    `*Blacklist* (${bl.length}) — never mint these:\n${blText}\n\n` +
+    `*Free Mints:* ${settings.allowFreeMints !== false ? "✅ Allowed" : "❌ Blocked"}\n\n` +
+    `Commands:\n` +
+    `/whitelist 0x... — add to whitelist\n` +
+    `/blacklist 0x... — add to blacklist\n` +
+    `/togglefreemints — toggle free mints`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("togglefreemints", async (ctx) => {
+  const current = getSettings().allowFreeMints !== false;
+  await updateSettings({ allowFreeMints: !current });
+  const now = !current;
+  await ctx.reply(
+    `${now ? "✅" : "❌"} *Free Mints: ${now ? "Allowed" : "Blocked"}*\n\n` +
+    `Auto-mint will ${now ? "now include" : "skip"} free (0 ETH) mints.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ─── Manual Mint ──────────────────────────────────────────────────────────────
+
+bot.command("mint", async (ctx) => {
+  const input = ctx.match?.trim();
+  if (!input) {
+    return ctx.reply(
+      `*Manual Mint*\n\n` +
+      `Usage: \`/mint <contract> [group] [calldata] [value_eth]\`\n\n` +
+      `Examples:\n` +
+      `\`/mint 0xContract\` — all wallets, default calldata\n` +
+      `\`/mint 0xContract mine\` — group 'mine' only\n` +
+      `\`/mint 0xContract mine 0.05\` — group + pay 0.05 ETH each\n` +
+      `\`/mint 0xContract mine 0x1249c58b 0.05\` — custom calldata`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  // Smart parser: detect each arg by format
+  const args = input.split(/\s+/);
+  let contract = null, group = null, calldata = null, value = "0";
+
+  for (const arg of args) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(arg) && !contract) {
+      contract = arg;
+    } else if (/^0x[0-9a-fA-F]{8,}$/.test(arg)) {
+      calldata = arg;
+    } else if (/^\d*\.?\d+$/.test(arg)) {
+      value = arg;
+    } else if (/^[a-zA-Z0-9_-]+$/.test(arg)) {
+      group = arg;
+    }
+  }
+
+  if (!contract) {
+    return ctx.reply("❌ Provide a valid contract address.\n\nUsage: `/mint 0xContract [group] [calldata] [value]`", { parse_mode: "Markdown" });
+  }
+
+  const target = group ? `group *${group}*` : "all sub-wallets";
+  const ethVal = parseFloat(value);
+
+  await ctx.reply(
+    `⚡ *Minting...*\n\n` +
+    `Contract: \`${shortAddr(contract)}\`\n` +
+    `Wallets: ${target}\n` +
+    `Value: ${ethVal} ETH each\n` +
+    `Calldata: \`${calldata || "default mint()"}\``,
+    { parse_mode: "Markdown" }
+  );
+
+  try {
+    const { succeeded, failed, skipped, total } = await executeManualMint(contract, calldata, value, group);
+    await ctx.reply(
+      `✅ *Manual Mint Complete!*\n\n` +
+      `✅ Succeeded: ${succeeded}\n` +
+      `❌ Failed: ${failed}\n` +
+      `⏭️ Skipped (low balance): ${skipped}\n` +
+      `📊 Total wallets: ${total}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Mint failed: ${err.message}`);
+  }
+});
+
+// ─── Gas Health Check ─────────────────────────────────────────────────────────
+
+bot.command("checkgas", async (ctx) => {
+  const thresholdInput = parseFloat(ctx.match?.trim() || "0.01");
+  const threshold = isNaN(thresholdInput) ? 0.01 : thresholdInput;
+  const CRITICAL = 0.003;
+
+  const wallets = listWallets();
+  if (wallets.length === 0) return ctx.reply("No sub-wallets configured.");
+
+  await ctx.reply(`🔍 Checking ${wallets.length} wallets (threshold: ${threshold} ETH)...`);
+
+  const balances = await Promise.all(
+    wallets.map(async (addr, i) => {
+      try {
+        const bal = await provider.getBalance(addr);
+        const eth = parseFloat(ethers.formatEther(bal));
+        return { index: i + 1, address: addr, eth };
+      } catch {
+        return { index: i + 1, address: addr, eth: 0 };
+      }
+    })
+  );
+
+  const low = balances.filter(w => w.eth < threshold);
+
+  if (low.length === 0) {
+    return ctx.reply(`✅ All ${wallets.length} wallets are above ${threshold} ETH. You're good.`);
+  }
+
+  const list = low.map(w => {
+    const icon = w.eth < CRITICAL ? "🔴" : "🟡";
+    return `${icon} #${w.index} \`${shortAddr(w.address)}\` — ${w.eth.toFixed(6)} ETH`;
+  }).join("\n");
+
+  const critical = low.filter(w => w.eth < CRITICAL).length;
+  const warn = low.length - critical;
+
+  await ctx.reply(
+    `⚠️ *Gas Health Check*\n\n` +
+    `${list}\n\n` +
+    `🔴 Critical (< ${CRITICAL} ETH): ${critical}\n` +
+    `🟡 Low (< ${threshold} ETH): ${warn}\n` +
+    `🟢 OK: ${wallets.length - low.length}\n\n` +
+    `_Use /distribute to top up wallets_`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ─── Profit Tracker ───────────────────────────────────────────────────────────
+
+async function getFloorPrice(contractAddress) {
+  try {
+    const res = await fetch(
+      `https://api.reservoir.tools/collections/v7?id=${contractAddress}`,
+      { headers: { "x-api-key": "demo" } }
+    );
+    const data = await res.json();
+    return data.collections?.[0]?.floorAsk?.price?.amount?.native ?? null;
+  } catch {
+    return null;
+  }
+}
+
+bot.command("profits", async (ctx) => {
+  const filterContract = ctx.match?.trim()?.toLowerCase();
+  const log = getMintLog();
+
+  if (log.length === 0) {
+    return ctx.reply("No mints recorded yet. Start minting and profits will be tracked here.");
+  }
+
+  // Group by contract
+  const byContract = {};
+  for (const entry of log) {
+    const c = entry.contract;
+    if (filterContract && c !== filterContract) continue;
+    if (!byContract[c]) byContract[c] = { count: 0, ethSpent: 0 };
+    byContract[c].count++;
+    byContract[c].ethSpent += entry.ethSpent || 0;
+  }
+
+  const contracts = Object.keys(byContract);
+  if (contracts.length === 0) {
+    return ctx.reply(`No mints found for \`${filterContract}\``, { parse_mode: "Markdown" });
+  }
+
+  // Limit to 8 most recent contracts (prevents giant messages)
+  const recent = contracts.slice(-8);
+
+  await ctx.reply(`📊 Fetching floor prices...`);
+
+  const ethPrice = await provider.getBalance(MAIN_ADDRESS)
+    .then(async () => {
+      try {
+        const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
+        const d = await r.json();
+        return d.ethereum.usd;
+      } catch { return 2000; }
+    })
+    .catch(() => 2000);
+
+  const lines = await Promise.all(
+    recent.map(async (c) => {
+      const { count, ethSpent } = byContract[c];
+      const floor = await getFloorPrice(c);
+
+      const spentUsd = (ethSpent * ethPrice).toFixed(2);
+      let profitLine = "";
+
+      if (floor !== null) {
+        const portfolioEth = floor * count;
+        const portfolioUsd = portfolioEth * ethPrice;
+        const plUsd = portfolioUsd - ethSpent * ethPrice;
+        const plSign = plUsd >= 0 ? "+" : "";
+        profitLine = `\nFloor: ${floor.toFixed(4)} ETH | Portfolio: ${portfolioEth.toFixed(4)} ETH\nP&L: ${plSign}$${plUsd.toFixed(2)}`;
+      } else {
+        profitLine = `\nFloor: N/A`;
+      }
+
+      return (
+        `*Contract:* \`${shortAddr(c)}\`\n` +
+        `Mints: ${count} | Spent: ${ethSpent.toFixed(4)} ETH ($${spentUsd})` +
+        profitLine
+      );
+    })
+  );
+
+  const totalMints = Object.values(byContract).reduce((s, v) => s + v.count, 0);
+  const totalEth = Object.values(byContract).reduce((s, v) => s + v.ethSpent, 0);
+
+  await ctx.reply(
+    `📊 *Mint Profit Tracker*\n` +
+    `_${totalMints} total mints across ${contracts.length} contracts_\n\n` +
+    lines.join("\n\n─────────────────\n\n") +
+    `\n\n─────────────────\n` +
+    `*Total ETH Spent: ${totalEth.toFixed(4)} ETH ($${(totalEth * ethPrice).toFixed(2)})*`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 // ─── Text handler (schedule flow + fallback) ─────────────────────────────────

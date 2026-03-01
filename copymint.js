@@ -1,28 +1,24 @@
 import { ethers } from "ethers";
 import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
-import { getSettings } from "./storage.js";
+import { getSettings, logMint } from "./storage.js";
 import { mintEvents } from "./tracker.js";
-import { getAllSigners } from "./wallets.js";
+import { getAllSigners, getGroupSigners } from "./wallets.js";
 import { v4 as uuidv4 } from "uuid";
 
 let provider;
 let mainSigner;
 let flashbotsProvider;
-let telegramNotify;    // injected from bot.js — sends plain alerts
-let telegramAskApproval; // injected from bot.js — sends approval prompt with buttons
+let telegramNotify;
+let telegramAskApproval;
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
-const MAX_MINT_USD = 0.15;       // default max per NFT in USD
-const APPROVAL_TIMEOUT_MS = 120000; // 2 minutes to respond
+const MAX_MINT_USD = 0.15;
+const APPROVAL_TIMEOUT_MS = 120000;
 
-// Pending approvals waiting for user response: mintId → { resolve, reject, timer }
 const pendingApprovals = new Map();
-
-// Deduplication — ignore tx if already processed
 const processedTxHashes = new Set();
 
-// ETH price cache
 let cachedEthPrice = null;
 let priceLastFetched = 0;
 
@@ -38,7 +34,7 @@ async function getEthUsdPrice() {
     priceLastFetched = now;
     return cachedEthPrice;
   } catch {
-    return cachedEthPrice || 2000; // fallback if API is down
+    return cachedEthPrice || 2000;
   }
 }
 
@@ -65,17 +61,36 @@ export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn)
 }
 
 async function handleMintDetected({ whale, contract, tx }) {
-  // Dedup — same tx can fire twice on WebSocket reconnect
   const txHash = tx.hash;
   if (txHash && processedTxHashes.has(txHash)) return;
   if (txHash) {
     processedTxHashes.add(txHash);
-    // Clean up after 10 mins to prevent unbounded memory growth
     setTimeout(() => processedTxHashes.delete(txHash), 10 * 60 * 1000);
   }
 
   const settings = getSettings();
+  const contractLower = contract.toLowerCase();
+  const whitelist = settings.whitelist || [];
+  const blacklist = settings.blacklist || [];
+
+  // ── Filters ──────────────────────────────────────────────────────────────
+  if (blacklist.includes(contractLower)) {
+    console.log(`[Filter] Blacklisted — skipping ${contract}`);
+    return;
+  }
+  if (whitelist.length > 0 && !whitelist.includes(contractLower)) {
+    console.log(`[Filter] Not in whitelist — skipping ${contract}`);
+    return;
+  }
+
   const txValue = tx.value ? BigInt(tx.value) : 0n;
+
+  // Free mint toggle
+  if (txValue === 0n && settings.allowFreeMints === false) {
+    console.log(`[Filter] Free mints disabled — skipping ${contract}`);
+    return;
+  }
+
   const ethPrice = await getEthUsdPrice();
   const ethAmount = parseFloat(ethers.formatEther(txValue));
   const usdCost = ethAmount * ethPrice;
@@ -92,7 +107,6 @@ async function handleMintDetected({ whale, contract, tx }) {
   await telegramNotify(alertMsg);
   if (!settings.autoMint) return;
 
-  // Free mint — go immediately
   if (txValue === 0n) {
     await Promise.all([
       executeCopyMint(tx, settings.mevShield),
@@ -101,7 +115,6 @@ async function handleMintDetected({ whale, contract, tx }) {
     return;
   }
 
-  // Under limit — mint automatically
   if (usdCost <= maxUsd) {
     await telegramNotify(`✅ Price $${usdCost.toFixed(2)} is under $${maxUsd} limit — minting automatically...`);
     await Promise.all([
@@ -111,7 +124,6 @@ async function handleMintDetected({ whale, contract, tx }) {
     return;
   }
 
-  // Over limit — ask for approval
   const mintId = uuidv4();
   await telegramAskApproval({
     mintId,
@@ -122,7 +134,6 @@ async function handleMintDetected({ whale, contract, tx }) {
     whale,
   });
 
-  // Wait for user response (yes/no) or timeout
   try {
     const approved = await waitForApproval(mintId);
     if (approved) {
@@ -144,12 +155,10 @@ function waitForApproval(mintId) {
       pendingApprovals.delete(mintId);
       reject(new Error("timeout"));
     }, APPROVAL_TIMEOUT_MS);
-
     pendingApprovals.set(mintId, { resolve, reject, timer });
   });
 }
 
-// Called from bot.js callback handlers
 export function resolveApproval(mintId, approved) {
   const pending = pendingApprovals.get(mintId);
   if (!pending) return false;
@@ -178,12 +187,21 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
       txHash = sentTx.hash;
     }
 
+    const mainAddr = await mainSigner.getAddress();
+    await logMint({
+      contract: mintTx.to.toLowerCase(),
+      wallet: mainAddr.toLowerCase(),
+      txHash,
+      ethSpent: parseFloat(ethers.formatEther(mintTx.value)),
+      timestamp: Date.now(),
+    });
+
     const shortContract = `${mintTx.to.slice(0, 6)}...${mintTx.to.slice(-4)}`;
     await telegramNotify(
       `✅ *Copy Mint Successful!*\n\n` +
       `📄 Contract: \`${shortContract}\`\n` +
       `⛓️ Chain: Ethereum\n` +
-      `💎 Minted to: \`${(await mainSigner.getAddress()).slice(0, 6)}...${(await mainSigner.getAddress()).slice(-4)}\``,
+      `💎 Minted to: \`${mainAddr.slice(0, 6)}...${mainAddr.slice(-4)}\``,
       txHash
     );
     return txHash;
@@ -194,43 +212,34 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
   }
 }
 
-// Forces quantity to 1 in mint calldata.
-// Handles the two most common patterns:
-//   - mint()              → no args, already 1, return as-is
-//   - mint(uint256 qty)   → 4-byte selector + 32-byte arg → replace arg with 1
-// Anything more complex is left untouched.
 function buildSingleMintData(originalData) {
   const data = originalData || "0x";
-  // No args (e.g. mint()) — already mints 1
   if (data.length <= 10) return data;
-  // One uint256 arg (e.g. mint(uint256 quantity)) — force to 1
   if (data.length === 74) {
     const selector = data.slice(0, 10);
     const encodedOne = "0000000000000000000000000000000000000000000000000000000000000001";
     return selector + encodedOne;
   }
-  // Complex calldata — use as-is
   return data;
 }
 
-async function executeSubWalletMints(whaleTx) {
-  const signers = getAllSigners(provider);
+async function executeSubWalletMints(whaleTx, groupName = null) {
+  const signers = groupName
+    ? getGroupSigners(groupName, provider)
+    : getAllSigners(provider);
   if (signers.length === 0) return;
 
   const txValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
-  // 0.015 ETH covers gas up to ~150 gwei on a 300k gas limit tx
   const GAS_BUFFER = ethers.parseEther("0.015");
 
-  // Get current network gas fees so sub-wallets are competitive
   const feeData = await provider.getFeeData();
   const maxFeePerGas = feeData.maxFeePerGas
-    ? (feeData.maxFeePerGas * 120n) / 100n  // 20% above current to ensure inclusion
+    ? (feeData.maxFeePerGas * 120n) / 100n
     : ethers.parseUnits("50", "gwei");
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
     ? feeData.maxPriorityFeePerGas
     : ethers.parseUnits("2", "gwei");
 
-  // Filter only wallets with enough balance
   const funded = (
     await Promise.all(
       signers.map(async (signer) => {
@@ -262,7 +271,17 @@ async function executeSubWalletMints(whaleTx) {
   };
 
   const results = await Promise.allSettled(
-    funded.map((signer) => signer.sendTransaction(mintTx))
+    funded.map(async (signer) => {
+      const tx = await signer.sendTransaction(mintTx);
+      await logMint({
+        contract: mintTx.to.toLowerCase(),
+        wallet: signer.address.toLowerCase(),
+        txHash: tx.hash,
+        ethSpent: parseFloat(ethers.formatEther(txValue)),
+        timestamp: Date.now(),
+      });
+      return tx;
+    })
   );
 
   const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -274,6 +293,74 @@ async function executeSubWalletMints(whaleTx) {
     `❌ Failed: ${failed}\n` +
     `⏭️ Skipped (no balance): ${signers.length - funded.length}`
   );
+}
+
+// Manual mint — called from /mint command
+export async function executeManualMint(contractAddress, calldata, valueEth, groupName = null) {
+  const value = valueEth ? ethers.parseEther(valueEth.toString()) : 0n;
+  const data = calldata || "0x1249c58b"; // standard mint() selector
+
+  const signers = groupName
+    ? getGroupSigners(groupName, provider)
+    : getAllSigners(provider);
+
+  if (signers.length === 0) {
+    throw new Error(groupName ? `Group "${groupName}" not found or empty` : "No sub-wallets configured");
+  }
+
+  const GAS_BUFFER = ethers.parseEther("0.015");
+  const feeData = await provider.getFeeData();
+  const maxFeePerGas = feeData.maxFeePerGas
+    ? (feeData.maxFeePerGas * 120n) / 100n
+    : ethers.parseUnits("50", "gwei");
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+    ? feeData.maxPriorityFeePerGas
+    : ethers.parseUnits("2", "gwei");
+
+  const funded = (
+    await Promise.all(
+      signers.map(async (signer) => {
+        try {
+          const balance = await provider.getBalance(signer.address);
+          return balance >= value + GAS_BUFFER ? signer : null;
+        } catch { return null; }
+      })
+    )
+  ).filter(Boolean);
+
+  if (funded.length === 0) {
+    throw new Error(`No wallets have enough ETH in ${groupName ? `group "${groupName}"` : "sub-wallets"}`);
+  }
+
+  const mintTx = {
+    to: contractAddress,
+    data,
+    value,
+    gasLimit: 300000n,
+    type: 2,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  };
+
+  const results = await Promise.allSettled(
+    funded.map(async (signer) => {
+      const tx = await signer.sendTransaction(mintTx);
+      await logMint({
+        contract: contractAddress.toLowerCase(),
+        wallet: signer.address.toLowerCase(),
+        txHash: tx.hash,
+        ethSpent: parseFloat(ethers.formatEther(value)),
+        timestamp: Date.now(),
+      });
+      return tx;
+    })
+  );
+
+  const succeeded = results.filter((r) => r.status === "fulfilled").length;
+  const failed = results.filter((r) => r.status === "rejected").length;
+  const skipped = signers.length - funded.length;
+
+  return { succeeded, failed, skipped, total: signers.length };
 }
 
 async function sendViaFlashbots(mintTx) {

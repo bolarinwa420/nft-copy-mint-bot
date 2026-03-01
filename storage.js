@@ -9,8 +9,12 @@ const defaultData = {
     mevShield: true,
     maxMintEth: "1.0",
     alertChatId: null,
+    whitelist: [],       // if non-empty, only auto-mint these contracts
+    blacklist: [],       // never auto-mint these contracts
+    allowFreeMints: true, // whether to auto-mint free (0 ETH) mints
   },
   jobs: [],          // scheduled mints
+  mintLog: [],       // [{ contract, wallet, txHash, ethSpent, timestamp }]
 };
 
 let db;
@@ -132,4 +136,48 @@ export async function updateJobStatus(id, status) {
 
 export function getJobs() {
   return db.data.jobs;
+}
+
+// --- Contract Filters ---
+
+export async function addToWhitelist(contract) {
+  const c = contract.toLowerCase();
+  if (!db.data.settings.whitelist) db.data.settings.whitelist = [];
+  if (!db.data.settings.whitelist.includes(c)) {
+    db.data.settings.whitelist.push(c);
+    await db.write();
+  }
+}
+
+export async function removeFromWhitelist(contract) {
+  if (!db.data.settings.whitelist) return;
+  db.data.settings.whitelist = db.data.settings.whitelist.filter(c => c !== contract.toLowerCase());
+  await db.write();
+}
+
+export async function addToBlacklist(contract) {
+  const c = contract.toLowerCase();
+  if (!db.data.settings.blacklist) db.data.settings.blacklist = [];
+  if (!db.data.settings.blacklist.includes(c)) {
+    db.data.settings.blacklist.push(c);
+    await db.write();
+  }
+}
+
+export async function removeFromBlacklist(contract) {
+  if (!db.data.settings.blacklist) return;
+  db.data.settings.blacklist = db.data.settings.blacklist.filter(c => c !== contract.toLowerCase());
+  await db.write();
+}
+
+// --- Mint Log ---
+
+export async function logMint(entry) {
+  if (!db.data.mintLog) db.data.mintLog = [];
+  db.data.mintLog.push(entry);
+  await db.write();
+}
+
+export function getMintLog() {
+  return db.data.mintLog || [];
 }

@@ -51,6 +51,15 @@ export function getAllSigners(provider) {
   });
 }
 
+export function getGroupSigners(groupName, provider) {
+  const wallets = getGroupWallets(groupName);
+  if (!wallets || wallets.length === 0) return [];
+  return wallets.map(w => {
+    const pk = xorDecode(w.encryptedPk, ENC_KEY);
+    return new ethers.Wallet(pk, provider);
+  });
+}
+
 // Returns decrypted { address, privateKey } for every wallet in a group
 export function getGroupPrivateKeys(groupName) {
   const wallets = getGroupWallets(groupName);
