@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets } from "./storage.js";
-import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs } from "./wallets.js";
+import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking } from "./tracker.js";
 import { initCopyMint, resolveApproval } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
@@ -137,6 +137,7 @@ bot.command("start", async (ctx) => {
     `/creategroup <name> <from> <to> — assign wallet range to a person\n` +
     `/groups — list all groups\n` +
     `/groupwallets <name> — show wallets in a group\n` +
+    `/groupprivatekey <name> — export private keys for a group (file)\n` +
     `/deletegroup <name> — remove a group\n` +
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
@@ -453,6 +454,38 @@ bot.command("groupwallets", async (ctx) => {
     `👥 *Group: ${name}* (${wallets.length} wallets)\n\n${list}`,
     { parse_mode: "Markdown" }
   );
+});
+
+bot.command("groupprivatekey", async (ctx) => {
+  // Admin-only — only the alert chat can request private keys
+  const adminChatId = String(getSettings().alertChatId || process.env.ALERT_CHAT_ID || "");
+  if (adminChatId && String(ctx.chat.id) !== adminChatId) {
+    return ctx.reply("❌ Unauthorized.");
+  }
+
+  const name = ctx.match?.trim();
+  if (!name) {
+    return ctx.reply("Usage: `/groupprivatekey <groupname>`\nExample: `/groupprivatekey karlkestis`", { parse_mode: "Markdown" });
+  }
+
+  const keys = getGroupPrivateKeys(name);
+  if (!keys) {
+    return ctx.reply(`❌ Group "${name}" not found or empty.`);
+  }
+
+  // Build file content
+  const lines = keys.map((w, i) =>
+    `Wallet #${i + 1}\nAddress:     ${w.address}\nPrivate Key: ${w.privateKey}`
+  ).join("\n\n");
+
+  const fileContent = `Group: ${name}\nTotal wallets: ${keys.length}\nExported: ${new Date().toUTCString()}\n\n${"─".repeat(50)}\n\n${lines}\n`;
+
+  // Send as a file — safer than pasting raw keys in chat
+  const buf = Buffer.from(fileContent, "utf-8");
+  await ctx.replyWithDocument(new InputFile(buf, `keys-${name}.txt`), {
+    caption: `🔐 *${name}* — ${keys.length} wallet keys\n⚠️ Delete this file after importing.`,
+    parse_mode: "Markdown",
+  });
 });
 
 bot.command("groupbalance", async (ctx) => {

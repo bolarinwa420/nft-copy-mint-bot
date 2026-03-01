@@ -51,6 +51,16 @@ export function getAllSigners(provider) {
   });
 }
 
+// Returns decrypted { address, privateKey } for every wallet in a group
+export function getGroupPrivateKeys(groupName) {
+  const wallets = getGroupWallets(groupName);
+  if (!wallets || wallets.length === 0) return null;
+  return wallets.map(w => ({
+    address: w.address,
+    privateKey: xorDecode(w.encryptedPk, ENC_KEY),
+  }));
+}
+
 // Send ETH from main wallet to sub-wallets (all or specific group)
 export async function distributeGas(mainSigner, amountEth, groupName = null) {
   const wallets = groupName ? getGroupWallets(groupName) : getSubWallets();
