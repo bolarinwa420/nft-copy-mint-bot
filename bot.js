@@ -96,7 +96,8 @@ function formatStatusMessage() {
     `Auto-Mint: ${settings.autoMint ? on + " ON" : off + " OFF"}\n` +
     `MEV Shield: ${settings.mevShield ? on + " ON" : off + " OFF"}\n` +
     `Max Mint: $${settings.maxMintUsd || "0.15"} USD\n` +
-    `Free Mints: ${settings.allowFreeMints !== false ? on + " ON" : off + " OFF"}\n\n` +
+    `Free Mints: ${settings.allowFreeMints !== false ? on + " ON" : off + " OFF"}\n` +
+    `Catch-All: ${settings.catchAll ? "⚡ ON" : off + " OFF (known selectors only)"}\n\n` +
     `*Filters:*\n` +
     `Whitelist: ${wl.length > 0 ? `${wl.length} contract(s)` : "All"}\n` +
     `Blacklist: ${bl.length > 0 ? `${bl.length} blocked` : "None"}\n\n` +
@@ -156,6 +157,7 @@ bot.command("start", async (ctx) => {
     `/unblacklist <contract> — remove from blacklist\n` +
     `/mintfilters — show whitelist/blacklist\n` +
     `/togglefreemints — allow/block free mints\n` +
+    `/togglecatchall — fire on ANY whale contract call (catches unknown mints)\n` +
     `/profits [contract] — mint profit tracker\n` +
     `/history [page] — full mint transaction history\n` +
     `/schedule — schedule a mint\n` +
@@ -795,6 +797,19 @@ bot.command("mintfilters", async (ctx) => {
     `/whitelist 0x... — add to whitelist\n` +
     `/blacklist 0x... — add to blacklist\n` +
     `/togglefreemints — toggle free mints`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("togglecatchall", async (ctx) => {
+  const current = getSettings().catchAll || false;
+  await updateSettings({ catchAll: !current });
+  const now = !current;
+  await ctx.reply(
+    `${now ? "⚡" : "🎯"} *Catch-All Mode: ${now ? "ON" : "OFF"}*\n\n` +
+    (now
+      ? `Bot will now fire on *any* contract call from tracked whales — including whitelist mints, presales, and unknown selectors.\n\n⚠️ May trigger on non-mint interactions (approvals, swaps, etc.)`
+      : `Bot will only fire on *known* mint selectors (standard + allowlist + presale).`),
     { parse_mode: "Markdown" }
   );
 });
