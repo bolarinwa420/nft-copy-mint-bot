@@ -80,6 +80,10 @@ export async function startTracking() {
   activeSubscription = true;
 }
 
+export function getAlchemy() {
+  return alchemy;
+}
+
 export async function restartTracking() {
   if (activeSubscription) {
     alchemy.ws.removeAllListeners();

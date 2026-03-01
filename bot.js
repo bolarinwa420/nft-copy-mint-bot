@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog } from "./storage.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
-import { initTracker, startTracking, restartTracking } from "./tracker.js";
+import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 
@@ -136,6 +136,7 @@ bot.command("start", async (ctx) => {
     `/track <address> — track a whale\n` +
     `/untrack <address> — stop tracking\n` +
     `/tracked — list tracked wallets\n` +
+    `/whalestats [address] [date] — daily activity for tracked whales\n` +
     `/wallets — list sub-wallets\n` +
     `/addwallet <privkey> — add sub-wallet\n` +
     `/removewallet <address> — remove sub-wallet\n` +
@@ -210,6 +211,115 @@ bot.command("tracked", async (ctx) => {
   await ctx.reply(`🐋 *Tracked Wallets (${tracked.length}):*\n\n${list}`, {
     parse_mode: "Markdown",
   });
+});
+
+// ─── Whale Daily Activity ─────────────────────────────────────────────────────
+
+async function fetchWhaleActivity(address, dateStr) {
+  const alchemy = getAlchemy();
+
+  // Build start/end timestamps for the requested date (UTC)
+  const start = new Date(`${dateStr}T00:00:00Z`);
+  const end   = new Date(`${dateStr}T23:59:59Z`);
+
+  const resp = await alchemy.core.getAssetTransfers({
+    fromAddress: address,
+    category: ["external", "erc721", "erc1155"],
+    withMetadata: true,
+    maxCount: 100,
+    order: "desc",
+  });
+
+  const transfers = (resp.transfers || []).filter(tx => {
+    const ts = new Date(tx.metadata?.blockTimestamp);
+    return ts >= start && ts <= end;
+  });
+
+  return transfers;
+}
+
+function summariseTransfers(transfers) {
+  // Group by contract (to address) with counts and ETH spent
+  const byContract = {};
+  for (const tx of transfers) {
+    const contract = tx.to?.toLowerCase() || "unknown";
+    if (!byContract[contract]) byContract[contract] = { count: 0, eth: 0, category: tx.category };
+    byContract[contract].count++;
+    byContract[contract].eth += parseFloat(tx.value || 0);
+  }
+  return byContract;
+}
+
+bot.command("whalestats", async (ctx) => {
+  const args = ctx.match?.trim().split(/\s+/).filter(Boolean) || [];
+
+  // Parse: optional address + optional date
+  let address = null;
+  let dateStr = new Date().toISOString().slice(0, 10); // default: today UTC
+
+  for (const arg of args) {
+    if (isValidAddress(arg)) address = arg.toLowerCase();
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(arg)) dateStr = arg;
+  }
+
+  const tracked = getTracked();
+  if (tracked.length === 0) return ctx.reply("No wallets being tracked. Use /track 0xAddress first.");
+
+  const targets = address ? [address] : tracked;
+
+  if (!targets.every(a => tracked.includes(a))) {
+    return ctx.reply(`❌ That address isn't in your tracked list.\nUse /tracked to see who you're watching.`);
+  }
+
+  await ctx.reply(`🔍 Fetching activity for ${targets.length} whale(s) on *${dateStr}*...`, { parse_mode: "Markdown" });
+
+  const sections = [];
+
+  for (const whale of targets) {
+    try {
+      const transfers = await fetchWhaleActivity(whale, dateStr);
+
+      if (transfers.length === 0) {
+        sections.push(`🐋 \`${shortAddr(whale)}\`\n_No activity on ${dateStr}_`);
+        continue;
+      }
+
+      const grouped = summariseTransfers(transfers);
+      const contracts = Object.keys(grouped);
+
+      const lines = contracts.map(c => {
+        const { count, eth, category } = grouped[c];
+        const icon = category === "erc721" || category === "erc1155" ? "🖼" : "💸";
+        const ethStr = eth > 0 ? ` — ${eth.toFixed(4)} ETH` : " — free";
+        return `${icon} \`${shortAddr(c)}\` × ${count}${ethStr}`;
+      });
+
+      const totalEth = transfers.reduce((s, t) => s + parseFloat(t.value || 0), 0);
+
+      sections.push(
+        `🐋 \`${whale}\`\n` +
+        `${transfers.length} tx(s) — ${totalEth.toFixed(4)} ETH spent\n\n` +
+        lines.join("\n")
+      );
+    } catch (err) {
+      sections.push(`🐋 \`${shortAddr(whale)}\` — ❌ Error: ${err.message}`);
+    }
+  }
+
+  // Telegram has a 4096 char limit — split if needed
+  const header = `📅 *Whale Activity — ${dateStr}*\n\n`;
+  const body = sections.join("\n\n─────────────────\n\n");
+  const full = header + body;
+
+  if (full.length <= 4000) {
+    await ctx.reply(full, { parse_mode: "Markdown", disable_web_page_preview: true });
+  } else {
+    // Send each whale as a separate message
+    await ctx.reply(header.trim(), { parse_mode: "Markdown" });
+    for (const section of sections) {
+      await ctx.reply(section, { parse_mode: "Markdown", disable_web_page_preview: true });
+    }
+  }
 });
 
 // Upload .txt file — auto-detects private keys vs whale addresses
