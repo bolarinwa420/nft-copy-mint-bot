@@ -168,6 +168,66 @@ bot.command("start", async (ctx) => {
   );
 });
 
+bot.command("commands", async (ctx) => {
+  await ctx.reply(
+    `📋 *All Commands*\n\n` +
+
+    `*📊 Dashboard*\n` +
+    `/status — live dashboard\n` +
+    `/commands — this list\n\n` +
+
+    `*🐋 Whale Tracking*\n` +
+    `/track <address> — start tracking a whale\n` +
+    `/untrack <address> — stop tracking\n` +
+    `/tracked — list tracked wallets\n` +
+    `/whalestats [address] [date] — daily on-chain activity\n\n` +
+
+    `*⚡ Auto-Mint Settings*\n` +
+    `/setmaxmint <usd> — max price per NFT in USD\n` +
+    `/togglefreemints — allow/block free mints\n` +
+    `/togglecatchall — catch ALL whale contract calls\n\n` +
+
+    `*🔍 Filters*\n` +
+    `/mintfilters — view whitelist & blacklist\n` +
+    `/whitelist <contract> — only auto-mint this contract\n` +
+    `/unwhitelist <contract> — remove from whitelist\n` +
+    `/blacklist <contract> — never auto-mint this contract\n` +
+    `/unblacklist <contract> — remove from blacklist\n\n` +
+
+    `*🖐 Manual Mint*\n` +
+    `/mint <contract> [group] [calldata] [value] — fire mint now\n\n` +
+
+    `*💼 Wallets*\n` +
+    `/wallets — list all sub-wallets with balances\n` +
+    `/addwallet <privkey> — add a sub-wallet\n` +
+    `/removewallet <address> — remove a sub-wallet\n` +
+    `/checkgas [min_eth] — show wallets with low gas\n` +
+    `/distribute <eth> [group] — send ETH to wallets\n` +
+    `/sweepgas — pull all ETH back to main wallet\n` +
+    `/sweepnfts <contract> — sweep NFTs to main wallet\n\n` +
+
+    `*👥 Groups*\n` +
+    `/creategroup <name> <from> <to> — create a wallet group\n` +
+    `/groups — list all groups\n` +
+    `/groupwallets <name> — wallets in a group\n` +
+    `/groupbalance <name> — balances for a group\n` +
+    `/groupprivatekey <name> — export keys for a group\n` +
+    `/deletegroup <name> — delete a group\n\n` +
+
+    `*📅 Scheduled Mints*\n` +
+    `/schedule — schedule a mint\n` +
+    `/jobs — view pending scheduled mints\n\n` +
+
+    `*📈 History & Profits*\n` +
+    `/history [page] — full mint log\n` +
+    `/profits [contract] — P&L tracker with floor prices\n\n` +
+
+    `*⚙️ Settings*\n` +
+    `/setalertchat — set this chat as the alert channel`,
+    { parse_mode: "Markdown" }
+  );
+});
+
 bot.command("status", async (ctx) => {
   await ctx.reply(formatStatusMessage(), {
     parse_mode: "Markdown",
