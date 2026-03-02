@@ -23,7 +23,8 @@ const MINT_SELECTORS = new Set([
   "0x8b83209b", // presaleMint variant
   "0xf3aaf5b7", // mintPresale
   // ── Platform-specific ─────────────────────────────────────────
-  "0x26092b83", // SeaDrop mintPublic
+  "0x161ac21f", // SeaDrop mintPublic(address,address,address,uint256)
+  "0x4b61cd6f", // SeaDrop mintSigned (guaranteed / server-signed drops)
   "0x9dbb844d", // Zora mint
   "0xefef39a1", // mintEdition(uint256)
   "0xd85d3d27", // safeMint

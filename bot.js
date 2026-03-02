@@ -1,11 +1,13 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
-import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog } from "./storage.js";
+import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches } from "./storage.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
+import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
+import { v4 as uuidv4 } from "uuid";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,8 @@ async function askApproval({ mintId, usdCost, ethAmount, maxUsd, contract, whale
 initTracker(process.env.ALCHEMY_API_KEY);
 await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
+initWatcher(provider, notify);
+startWatcher();
 await startTracking();
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -947,6 +951,84 @@ bot.command("mint", async (ctx) => {
   } catch (err) {
     await ctx.reply(`❌ Mint failed: ${err.message}`);
   }
+});
+
+// ─── Drop Watcher ─────────────────────────────────────────────────────────────
+
+bot.command("watch", async (ctx) => {
+  const args = ctx.match?.trim().split(/\s+/) || [];
+  const contract = args[0];
+  const group = args[1] || null;
+
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply(
+      `*SeaDrop Drop Watcher*\n\n` +
+      `Polls every 30s — fires automatically when public mint goes live.\n\n` +
+      `Usage: \`/watch <nftContract> [group]\`\n\n` +
+      `Examples:\n` +
+      `\`/watch 0x4ff1931f0a1c0c3e319cbfda81c850bb79f01693\` — all wallets\n` +
+      `\`/watch 0x4ff1931f0a1c0c3e319cbfda81c850bb79f01693 karlkestis\` — one group`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const id = uuidv4();
+  const calldata = buildMintPublicCalldata(contract);
+
+  await addWatch({
+    id,
+    nftContract: contract.toLowerCase(),
+    group: group || null,
+    calldata,
+    active: true,
+    createdAt: Date.now(),
+  });
+
+  const target = group ? `group *${group}*` : "all wallets";
+  await ctx.reply(
+    `👁 *Watch Active!*\n\n` +
+    `Contract: \`${contract}\`\n` +
+    `Wallets: ${target}\n\n` +
+    `Polling every 30s. Will auto-mint the moment public drop goes live.\n\n` +
+    `ID: \`${id.slice(0, 8)}\` — use /watches to manage`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("watches", async (ctx) => {
+  const watches = getWatches();
+  if (watches.length === 0) {
+    return ctx.reply("No active watches.\n\nUse `/watch <contract>` to set one up.", { parse_mode: "Markdown" });
+  }
+
+  const lines = watches.map((w) => {
+    const status = w.active ? "👁 Active" : "✅ Fired";
+    const target = w.group ? `group: ${w.group}` : "all wallets";
+    const date = new Date(w.createdAt).toLocaleDateString();
+    return `${status} | \`${w.nftContract.slice(0, 10)}...\` | ${target} | ${date}\nID: \`${w.id.slice(0, 8)}\``;
+  });
+
+  await ctx.reply(
+    `*Drop Watches (${watches.length})*\n\n${lines.join("\n\n")}\n\nUse \`/unwatch <id>\` to cancel`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("unwatch", async (ctx) => {
+  const input = ctx.match?.trim();
+  if (!input) {
+    return ctx.reply("Usage: `/unwatch <id>`\n\nGet the ID from /watches", { parse_mode: "Markdown" });
+  }
+
+  const watches = getWatches();
+  const match = watches.find((w) => w.id.startsWith(input) || w.id === input);
+
+  if (!match) {
+    return ctx.reply(`❌ No watch found with ID \`${input}\`\n\nUse /watches to list them`, { parse_mode: "Markdown" });
+  }
+
+  await removeWatch(match.id);
+  await ctx.reply(`🗑 Watch removed for \`${match.nftContract}\``, { parse_mode: "Markdown" });
 });
 
 // ─── Gas Health Check ─────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ const defaultData = {
   },
   jobs: [],          // scheduled mints
   mintLog: [],       // [{ contract, wallet, txHash, ethSpent, timestamp }]
+  watches: [],       // drop watchers: [{ id, nftContract, group, calldata, active, createdAt }]
 };
 
 let db;
@@ -168,6 +169,30 @@ export async function removeFromBlacklist(contract) {
   if (!db.data.settings.blacklist) return;
   db.data.settings.blacklist = db.data.settings.blacklist.filter(c => c !== contract.toLowerCase());
   await db.write();
+}
+
+// --- Drop Watches ---
+
+export async function addWatch(watch) {
+  if (!db.data.watches) db.data.watches = [];
+  db.data.watches.push(watch);
+  await db.write();
+}
+
+export async function deactivateWatch(id) {
+  if (!db.data.watches) return;
+  const w = db.data.watches.find((w) => w.id === id);
+  if (w) { w.active = false; await db.write(); }
+}
+
+export async function removeWatch(id) {
+  if (!db.data.watches) return;
+  db.data.watches = db.data.watches.filter((w) => w.id !== id);
+  await db.write();
+}
+
+export function getWatches() {
+  return db.data.watches || [];
 }
 
 // --- Mint Log ---
