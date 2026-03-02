@@ -259,7 +259,6 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
   if (signers.length === 0) return;
 
   const txValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
-  const GAS_BUFFER = ethers.parseEther("0.015");
 
   const feeData = await provider.getFeeData();
   const maxFeePerGas = feeData.maxFeePerGas
@@ -268,6 +267,12 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
     ? feeData.maxPriorityFeePerGas
     : ethers.parseUnits("2", "gwei");
+
+  // Gas buffer = actual estimated gas cost based on live gas price
+  const gasLimit = whaleTx.gas
+    ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
+    : 300000n;
+  const GAS_BUFFER = (maxFeePerGas * gasLimit * 120n) / 100n; // +20% safety margin
 
   // Batch balance checks (10 at a time) to avoid Alchemy rate limits
   const BATCH_SIZE = 10;
