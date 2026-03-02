@@ -5,6 +5,34 @@ import { mintEvents } from "./tracker.js";
 import { getAllSigners, getGroupSigners } from "./wallets.js";
 import { v4 as uuidv4 } from "uuid";
 
+const SEADROP_ADDRESS = "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
+const SEADROP_MINT_PUBLIC_SELECTOR = "0x161ac21f";
+const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
+const SEADROP_IFACE = new ethers.Interface([
+  "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity)",
+]);
+
+// Fix SeaDrop calldata so our wallet is both payer AND minter (avoids PayerNotAllowed)
+function fixSeaDropCalldata(to, calldata) {
+  if (
+    to?.toLowerCase() === SEADROP_ADDRESS &&
+    calldata?.slice(0, 10).toLowerCase() === SEADROP_MINT_PUBLIC_SELECTOR
+  ) {
+    try {
+      const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", calldata);
+      return SEADROP_IFACE.encodeFunctionData("mintPublic", [
+        decoded.nftContract,
+        decoded.feeRecipient || OPENSEA_FEE_RECIPIENT,
+        ethers.ZeroAddress, // minterIfNotPayer = 0 → msg.sender is the minter
+        decoded.quantity,
+      ]);
+    } catch (e) {
+      console.warn("[CopyMint] SeaDrop calldata decode failed, using original:", e.message);
+    }
+  }
+  return calldata;
+}
+
 let provider;
 let mainSigner;
 let flashbotsProvider;
@@ -169,9 +197,10 @@ export function resolveApproval(mintId, approved) {
 }
 
 export async function executeCopyMint(whaleTx, useMevShield = true) {
+  const rawData = whaleTx.input || whaleTx.data || "0x";
   const mintTx = {
     to: whaleTx.to,
-    data: whaleTx.input || whaleTx.data || "0x",
+    data: fixSeaDropCalldata(whaleTx.to, rawData),
     value: whaleTx.value ? BigInt(whaleTx.value) : 0n,
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
@@ -258,9 +287,11 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     return;
   }
 
+  const rawSubData = whaleTx.input || whaleTx.data || "0x";
+  const fixedSubData = fixSeaDropCalldata(whaleTx.to, rawSubData);
   const mintTx = {
     to: whaleTx.to,
-    data: buildSingleMintData(whaleTx.input || whaleTx.data || "0x"),
+    data: buildSingleMintData(fixedSubData),
     value: txValue,
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
