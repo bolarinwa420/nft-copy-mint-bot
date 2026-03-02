@@ -269,21 +269,41 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     ? feeData.maxPriorityFeePerGas
     : ethers.parseUnits("2", "gwei");
 
-  const funded = (
-    await Promise.all(
-      signers.map(async (signer) => {
+  // Batch balance checks (10 at a time) to avoid Alchemy rate limits
+  const BATCH_SIZE = 10;
+  const funded = [];
+  let rpcErrors = 0;
+  let belowThreshold = 0;
+
+  for (let i = 0; i < signers.length; i += BATCH_SIZE) {
+    const batch = signers.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (signer) => {
         try {
           const balance = await provider.getBalance(signer.address);
-          return balance >= txValue + GAS_BUFFER ? signer : null;
+          if (balance >= txValue + GAS_BUFFER) return signer;
+          belowThreshold++;
+          return null;
         } catch {
+          rpcErrors++;
           return null;
         }
       })
-    )
-  ).filter(Boolean);
+    );
+    funded.push(...results.filter(Boolean));
+    if (i + BATCH_SIZE < signers.length) {
+      await new Promise(r => setTimeout(r, 200)); // small pause between batches
+    }
+  }
 
   if (funded.length === 0) {
-    await telegramNotify(`💼 *Sub-Wallets:* 0 funded — skipped`);
+    const threshold = ethers.formatEther(txValue + GAS_BUFFER);
+    await telegramNotify(
+      `💼 *Sub-Wallets:* 0 funded — skipped\n` +
+      `Checked: ${signers.length} wallets | Need: ${threshold} ETH each` +
+      (rpcErrors > 0 ? `\n⚠️ ${rpcErrors} RPC errors (rate limit?)` : "") +
+      (belowThreshold > 0 ? `\n💸 ${belowThreshold} wallets below threshold` : "")
+    );
     return;
   }
 
