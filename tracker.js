@@ -28,7 +28,6 @@ const MINT_SELECTORS = new Set([
   "0x9dbb844d", // Zora mint
   "0xefef39a1", // mintEdition(uint256)
   "0xd85d3d27", // safeMint
-  "0xa22cb465", // Manifold setApprovalForAll (often bundled with mints)
   "0xfa7b9a7b", // Manifold claim
   "0x57bc3d78", // Manifold claimTo
 ]);
