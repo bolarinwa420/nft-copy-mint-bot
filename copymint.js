@@ -196,8 +196,19 @@ export function resolveApproval(mintId, approved) {
   return true;
 }
 
+const SEADROP_MINT_SIGNED_SELECTOR = "0x4b61cd6f";
+
 export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
+
+  // mintSigned = signature locked to whale's wallet — cannot copy
+  if (rawData.slice(0, 10).toLowerCase() === SEADROP_MINT_SIGNED_SELECTOR) {
+    await telegramNotify(
+      `🔒 *Signed Mint — Skipped*\n\n` +
+      `This was a guaranteed/allowlist drop. The signature is tied to the whale's wallet and cannot be copied.`
+    );
+    return;
+  }
   const mintTx = {
     to: whaleTx.to,
     data: fixSeaDropCalldata(whaleTx.to, rawData),
