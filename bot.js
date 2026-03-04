@@ -330,7 +330,9 @@ bot.command("setalert", async (ctx) => {
   if (!parts || parts.length < 3) {
     return ctx.reply("Usage: `/setalert <contract> <name> <targetPriceETH>`\nExample: `/setalert 0xabc...def cc0mon 0.05`", { parse_mode: "Markdown" });
   }
-  const [contract, name, priceStr] = parts;
+  const contract = parts[0];
+  const priceStr = parts[parts.length - 1];
+  const name = parts.slice(1, -1).join(" ");
   if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
     return ctx.reply("Invalid contract address.");
   }
