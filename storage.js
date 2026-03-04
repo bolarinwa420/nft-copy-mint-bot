@@ -16,6 +16,7 @@ const defaultData = {
   jobs: [],          // scheduled mints
   mintLog: [],       // [{ contract, wallet, txHash, ethSpent, timestamp }]
   watches: [],       // drop watchers: [{ id, nftContract, group, calldata, active, createdAt }]
+  priceAlerts: [],   // floor price alerts: [{ id, contract, targetPrice, lastFiredAt, createdAt }]
 };
 
 let db;
@@ -205,4 +206,31 @@ export async function logMint(entry) {
 
 export function getMintLog() {
   return db.data.mintLog || [];
+}
+
+// --- Price Alerts ---
+
+export async function addPriceAlert(alert) {
+  if (!db.data.priceAlerts) db.data.priceAlerts = [];
+  db.data.priceAlerts.push(alert);
+  await db.write();
+}
+
+export async function removePriceAlert(id) {
+  if (!db.data.priceAlerts) return;
+  db.data.priceAlerts = db.data.priceAlerts.filter(a => a.id !== id);
+  await db.write();
+}
+
+export function getPriceAlerts() {
+  return db.data.priceAlerts || [];
+}
+
+export async function updatePriceAlert(id, patch) {
+  if (!db.data.priceAlerts) return;
+  const alert = db.data.priceAlerts.find(a => a.id === id);
+  if (alert) {
+    Object.assign(alert, patch);
+    await db.write();
+  }
 }

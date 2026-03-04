@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
-import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches } from "./storage.js";
+import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts } from "./storage.js";
+import { initPriceAlerts } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
@@ -70,6 +71,7 @@ initTracker(process.env.ALCHEMY_API_KEY);
 await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
 initWatcher(provider, notify);
+initPriceAlerts(notify);
 startWatcher();
 await startTracking();
 
@@ -226,6 +228,11 @@ bot.command("commands", async (ctx) => {
     `/history [page] — full mint log\n` +
     `/profits [contract] — P&L tracker with floor prices\n\n` +
 
+    `*🔔 Price Alerts*\n` +
+    `/setalert <contract> <price> — alert when floor hits target ETH\n` +
+    `/removealert <contract> — remove an alert\n` +
+    `/alerts — list all active alerts\n\n` +
+
     `*⚙️ Settings*\n` +
     `/setalertchat — set this chat as the alert channel`,
     { parse_mode: "Markdown" }
@@ -315,6 +322,55 @@ function summariseTransfers(transfers) {
   }
   return byContract;
 }
+
+// ─── Price Alerts ─────────────────────────────────────────────────────────────
+
+bot.command("setalert", async (ctx) => {
+  const parts = ctx.match?.trim().split(/\s+/);
+  if (!parts || parts.length < 2) {
+    return ctx.reply("Usage: `/setalert <contract> <targetPriceETH>`\nExample: `/setalert 0xabc...def 0.05`", { parse_mode: "Markdown" });
+  }
+  const [contract, priceStr] = parts;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
+    return ctx.reply("Invalid contract address.");
+  }
+  const targetPrice = parseFloat(priceStr);
+  if (isNaN(targetPrice) || targetPrice <= 0) {
+    return ctx.reply("Invalid price. Use ETH value like `0.05`.", { parse_mode: "Markdown" });
+  }
+  const { v4: uuidv4Alert } = await import("uuid");
+  const existing = getPriceAlerts().find(a => a.contract === contract.toLowerCase());
+  if (existing) {
+    return ctx.reply(`Alert already set for \`${contract}\` at ${existing.targetPrice} ETH. Use /removealert first to change it.`, { parse_mode: "Markdown" });
+  }
+  await addPriceAlert({
+    id: uuidv4Alert(),
+    contract: contract.toLowerCase(),
+    targetPrice,
+    lastFiredAt: null,
+    createdAt: Date.now(),
+  });
+  await ctx.reply(`✅ Alert set!\nI'll ping you when \`${contract}\` floor hits *${targetPrice} ETH* or above.`, { parse_mode: "Markdown" });
+});
+
+bot.command("removealert", async (ctx) => {
+  const contract = ctx.match?.trim().toLowerCase();
+  if (!contract) return ctx.reply("Usage: `/removealert <contract>`", { parse_mode: "Markdown" });
+  const alert = getPriceAlerts().find(a => a.contract === contract);
+  if (!alert) return ctx.reply("No alert found for that contract.");
+  await removePriceAlert(alert.id);
+  await ctx.reply(`🗑 Alert removed for \`${contract}\``, { parse_mode: "Markdown" });
+});
+
+bot.command("alerts", async (ctx) => {
+  const alerts = getPriceAlerts();
+  if (alerts.length === 0) return ctx.reply("No price alerts set. Use `/setalert <contract> <price>` to add one.", { parse_mode: "Markdown" });
+  const lines = alerts.map((a, i) => {
+    const fired = a.lastFiredAt ? `Last fired: ${new Date(a.lastFiredAt).toUTCString()}` : "Not yet fired";
+    return `${i + 1}. \`${a.contract}\`\nTarget: *${a.targetPrice} ETH* | ${fired}`;
+  });
+  await ctx.reply(`🔔 *Price Alerts (${alerts.length})*\n\n` + lines.join("\n\n"), { parse_mode: "Markdown" });
+});
 
 bot.command("whalestats", async (ctx) => {
   const args = ctx.match?.trim().split(/\s+/).filter(Boolean) || [];
