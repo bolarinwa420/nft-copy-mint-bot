@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts } from "./storage.js";
-import { initPriceAlerts } from "./priceAlerts.js";
+import { initPriceAlerts, getFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
@@ -373,6 +373,25 @@ bot.command("alerts", async (ctx) => {
     return `${i + 1}. *${a.name || "unnamed"}* — \`${a.contract}\`\nTarget: *${a.targetPrice} ETH* | ${fired}`;
   });
   await ctx.reply(`🔔 *Price Alerts (${alerts.length})*\n\n` + lines.join("\n\n"), { parse_mode: "Markdown" });
+});
+
+bot.command("checkalert", async (ctx) => {
+  const alerts = getPriceAlerts();
+  if (alerts.length === 0) return ctx.reply("No alerts set.");
+  await ctx.reply("🔍 Checking floor prices now...");
+  const lines = await Promise.all(alerts.map(async (a) => {
+    const floor = await getFloorPrice(a.contract);
+    const cooldownInfo = a.lastFiredAt
+      ? `Last fired: ${Math.round((Date.now() - a.lastFiredAt) / 60000)} min ago`
+      : "Never fired";
+    const status = floor === null
+      ? "❓ Reservoir returned null"
+      : floor >= a.targetPrice
+        ? `✅ ABOVE target (${floor.toFixed(4)} ETH ≥ ${a.targetPrice} ETH)`
+        : `⏳ Below target (${floor.toFixed(4)} ETH < ${a.targetPrice} ETH)`;
+    return `*${a.name || "unnamed"}*\n${status}\n${cooldownInfo}`;
+  }));
+  await ctx.reply(lines.join("\n\n"), { parse_mode: "Markdown" });
 });
 
 bot.command("whalestats", async (ctx) => {

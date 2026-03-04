@@ -3,7 +3,7 @@ import { getPriceAlerts, updatePriceAlert } from "./storage.js";
 const POLL_INTERVAL = 2 * 60 * 1000;  // check every 2 minutes
 const COOLDOWN = 30 * 60 * 1000;      // re-alert max once per 30 min per contract
 
-async function getFloorPrice(contract) {
+export async function getFloorPrice(contract) {
   try {
     const res = await fetch(
       `https://api.reservoir.tools/collections/v7?id=${contract}`,
@@ -21,7 +21,11 @@ export function initPriceAlerts(notify) {
     const alerts = getPriceAlerts();
     for (const alert of alerts) {
       const floor = await getFloorPrice(alert.contract);
-      if (floor === null) continue;
+      console.log(`[PriceAlerts] ${alert.name} — floor: ${floor} | target: ${alert.targetPrice}`);
+      if (floor === null) {
+        console.log(`[PriceAlerts] Reservoir returned null for ${alert.contract}`);
+        continue;
+      }
 
       if (floor >= alert.targetPrice) {
         const now = Date.now();
@@ -33,6 +37,9 @@ export function initPriceAlerts(notify) {
             `Floor is now *${floor.toFixed(4)} ETH* ≥ target ${alert.targetPrice} ETH`
           );
           await updatePriceAlert(alert.id, { lastFiredAt: now });
+        } else {
+          const minsLeft = Math.ceil((COOLDOWN - (now - alert.lastFiredAt)) / 60000);
+          console.log(`[PriceAlerts] ${alert.name} cooldown — ${minsLeft} min left`);
         }
       }
     }
