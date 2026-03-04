@@ -218,6 +218,18 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
       : 300000n,
   };
 
+  // Simulate before sending — catches IncorrectPayment, reverts, etc. at zero cost
+  try {
+    await provider.call({ ...mintTx, from: await mainSigner.getAddress() });
+  } catch (simErr) {
+    const reason = simErr.reason || simErr.message?.slice(0, 120) || "unknown revert";
+    await telegramNotify(
+      `⚠️ *Mint Simulation Failed — Skipped*\n\n` +
+      `The tx would revert on-chain. Reason:\n\`${reason}\``
+    );
+    return;
+  }
+
   try {
     let txHash;
     if (useMevShield && flashbotsProvider) {
@@ -336,6 +348,18 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     maxFeePerGas,
     maxPriorityFeePerGas,
   };
+
+  // Simulate with first funded wallet before firing all sub-wallets
+  try {
+    await provider.call({ ...mintTx, from: funded[0].address });
+  } catch (simErr) {
+    const reason = simErr.reason || simErr.message?.slice(0, 120) || "unknown revert";
+    await telegramNotify(
+      `⚠️ *Sub-Wallet Simulation Failed — All Skipped*\n\n` +
+      `The tx would revert on-chain. Reason:\n\`${reason}\``
+    );
+    return;
+  }
 
   const results = await Promise.allSettled(
     funded.map(async (signer) => {
