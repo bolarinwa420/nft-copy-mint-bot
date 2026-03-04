@@ -331,14 +331,14 @@ bot.command("setalert", async (ctx) => {
     return ctx.reply("Usage: `/setalert <contract> <name> <targetPriceETH>`\nExample: `/setalert 0xabc...def cc0mon 0.05`", { parse_mode: "Markdown" });
   }
   const contract = parts[0];
-  const priceStr = parts[parts.length - 1];
+  const priceStr = parts[parts.length - 1].replace(/[^\d.]/g, ""); // strip trailing punctuation
   const name = parts.slice(1, -1).join(" ");
   if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
     return ctx.reply("Invalid contract address.");
   }
   const targetPrice = parseFloat(priceStr);
   if (isNaN(targetPrice) || targetPrice <= 0) {
-    return ctx.reply("Invalid price. Use ETH value like `0.05`.", { parse_mode: "Markdown" });
+    return ctx.reply("Invalid price — enter a number in ETH, e.g. `0.01` or `2.5`.", { parse_mode: "Markdown" });
   }
   const { v4: uuidv4Alert } = await import("uuid");
   const existing = getPriceAlerts().find(a => a.contract === contract.toLowerCase());
