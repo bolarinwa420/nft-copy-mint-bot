@@ -1490,7 +1490,64 @@ bot.callbackQuery("jobs_back", async (ctx) => {
 
 console.log(`[Bot] Starting — Main wallet: ${MAIN_ADDRESS}`);
 bot.start({
-  onStart: () => console.log("[Bot] Online and watching"),
+  onStart: async () => {
+    console.log("[Bot] Online and watching");
+    await bot.api.setMyCommands([
+      // Dashboard
+      { command: "start",           description: "Welcome message" },
+      { command: "status",          description: "Live bot dashboard" },
+      { command: "commands",        description: "Full command list" },
+      // Whale tracking
+      { command: "track",           description: "Track a whale wallet" },
+      { command: "untrack",         description: "Stop tracking a wallet" },
+      { command: "tracked",         description: "List tracked wallets" },
+      { command: "whalestats",      description: "Whale daily on-chain activity" },
+      // Auto-mint
+      { command: "setmaxmint",      description: "Set max mint price in USD" },
+      { command: "togglefreemints", description: "Allow / block free mints" },
+      { command: "togglecatchall",  description: "Catch all whale contract calls" },
+      // Filters
+      { command: "mintfilters",     description: "View whitelist & blacklist" },
+      { command: "whitelist",       description: "Only auto-mint this contract" },
+      { command: "unwhitelist",     description: "Remove contract from whitelist" },
+      { command: "blacklist",       description: "Never auto-mint this contract" },
+      { command: "unblacklist",     description: "Remove contract from blacklist" },
+      // Manual mint
+      { command: "mint",            description: "Fire a manual mint now" },
+      // Wallets
+      { command: "wallets",         description: "List all sub-wallets with balances" },
+      { command: "addwallet",       description: "Add a sub-wallet" },
+      { command: "removewallet",    description: "Remove a sub-wallet" },
+      { command: "checkgas",        description: "Show wallets with low gas" },
+      { command: "distribute",      description: "Send ETH to wallets or group" },
+      { command: "sweepgas",        description: "Pull all ETH back to main wallet" },
+      { command: "sweepnfts",       description: "Sweep NFTs to main wallet" },
+      // Groups
+      { command: "creategroup",     description: "Create a wallet group" },
+      { command: "groups",          description: "List all groups" },
+      { command: "groupwallets",    description: "List wallets in a group" },
+      { command: "groupbalance",    description: "Show balances for a group" },
+      { command: "groupprivatekey", description: "Export private keys for a group" },
+      { command: "deletegroup",     description: "Delete a group" },
+      // Scheduled mints
+      { command: "schedule",        description: "Schedule a mint" },
+      { command: "jobs",            description: "View pending scheduled mints" },
+      // History & profits
+      { command: "history",         description: "Full mint log (paginated)" },
+      { command: "profits",         description: "P&L tracker with floor prices" },
+      // Price alerts
+      { command: "setalert",        description: "Alert when floor hits target ETH" },
+      { command: "removealert",     description: "Remove a price alert" },
+      { command: "alerts",          description: "List all active price alerts" },
+      // Drop watcher
+      { command: "watch",           description: "Watch a SeaDrop contract for drop" },
+      { command: "watches",         description: "List active drop watchers" },
+      { command: "unwatch",         description: "Remove a drop watcher" },
+      // Settings
+      { command: "setalertchat",    description: "Set this chat as the alert channel" },
+    ]);
+    console.log("[Bot] Commands registered with Telegram");
+  },
 });
 
 // Graceful shutdown for Railway restarts
