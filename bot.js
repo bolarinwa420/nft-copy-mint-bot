@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts } from "./storage.js";
-import { initPriceAlerts, getFloorPrice } from "./priceAlerts.js";
+import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
@@ -380,7 +380,7 @@ bot.command("checkalert", async (ctx) => {
   if (alerts.length === 0) return ctx.reply("No alerts set.");
   await ctx.reply("🔍 Checking floor prices now...");
   const lines = await Promise.all(alerts.map(async (a) => {
-    const floor = await getFloorPrice(a.contract);
+    const floor = await getAlertFloorPrice(a.contract);
     const cooldownInfo = a.lastFiredAt
       ? `Last fired: ${Math.round((Date.now() - a.lastFiredAt) / 60000)} min ago`
       : "Never fired";
