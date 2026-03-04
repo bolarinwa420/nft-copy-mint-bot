@@ -349,18 +349,6 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     maxPriorityFeePerGas,
   };
 
-  // Simulate with first funded wallet before firing all sub-wallets
-  try {
-    await provider.call({ ...mintTx, from: funded[0].address });
-  } catch (simErr) {
-    const reason = simErr.reason || simErr.message?.slice(0, 120) || "unknown revert";
-    await telegramNotify(
-      `⚠️ *Sub-Wallet Simulation Failed — All Skipped*\n\n` +
-      `The tx would revert on-chain. Reason:\n\`${reason}\``
-    );
-    return;
-  }
-
   const results = await Promise.allSettled(
     funded.map(async (signer) => {
       const tx = await signer.sendTransaction(mintTx);

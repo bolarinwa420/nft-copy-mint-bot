@@ -1511,7 +1511,7 @@ console.log(`[Bot] Starting — Main wallet: ${MAIN_ADDRESS}`);
 bot.start({
   onStart: async () => {
     console.log("[Bot] Online and watching");
-    await bot.api.setMyCommands([
+    try { await bot.api.setMyCommands([
       // Dashboard
       { command: "start",           description: "Welcome message" },
       { command: "status",          description: "Live bot dashboard" },
@@ -1564,8 +1564,8 @@ bot.start({
       { command: "unwatch",         description: "Remove a drop watcher" },
       // Settings
       { command: "setalertchat",    description: "Set this chat as the alert channel" },
-    ]);
-    console.log("[Bot] Commands registered with Telegram");
+    ]); console.log("[Bot] Commands registered with Telegram");
+    } catch (e) { console.warn("[Bot] setMyCommands failed:", e.message); }
   },
 });
 
