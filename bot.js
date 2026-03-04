@@ -229,7 +229,7 @@ bot.command("commands", async (ctx) => {
     `/profits [contract] — P&L tracker with floor prices\n\n` +
 
     `*🔔 Price Alerts*\n` +
-    `/setalert <contract> <price> — alert when floor hits target ETH\n` +
+    `/setalert <contract> <name> <price> — alert when floor hits target ETH\n` +
     `/removealert <contract> — remove an alert\n` +
     `/alerts — list all active alerts\n\n` +
 
@@ -327,10 +327,10 @@ function summariseTransfers(transfers) {
 
 bot.command("setalert", async (ctx) => {
   const parts = ctx.match?.trim().split(/\s+/);
-  if (!parts || parts.length < 2) {
-    return ctx.reply("Usage: `/setalert <contract> <targetPriceETH>`\nExample: `/setalert 0xabc...def 0.05`", { parse_mode: "Markdown" });
+  if (!parts || parts.length < 3) {
+    return ctx.reply("Usage: `/setalert <contract> <name> <targetPriceETH>`\nExample: `/setalert 0xabc...def cc0mon 0.05`", { parse_mode: "Markdown" });
   }
-  const [contract, priceStr] = parts;
+  const [contract, name, priceStr] = parts;
   if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
     return ctx.reply("Invalid contract address.");
   }
@@ -341,16 +341,17 @@ bot.command("setalert", async (ctx) => {
   const { v4: uuidv4Alert } = await import("uuid");
   const existing = getPriceAlerts().find(a => a.contract === contract.toLowerCase());
   if (existing) {
-    return ctx.reply(`Alert already set for \`${contract}\` at ${existing.targetPrice} ETH. Use /removealert first to change it.`, { parse_mode: "Markdown" });
+    return ctx.reply(`Alert already set for *${existing.name}* at ${existing.targetPrice} ETH. Use /removealert first to change it.`, { parse_mode: "Markdown" });
   }
   await addPriceAlert({
     id: uuidv4Alert(),
     contract: contract.toLowerCase(),
+    name,
     targetPrice,
     lastFiredAt: null,
     createdAt: Date.now(),
   });
-  await ctx.reply(`✅ Alert set!\nI'll ping you when \`${contract}\` floor hits *${targetPrice} ETH* or above.`, { parse_mode: "Markdown" });
+  await ctx.reply(`✅ Alert set!\nI'll ping you when *${name}* floor hits *${targetPrice} ETH* or above.`, { parse_mode: "Markdown" });
 });
 
 bot.command("removealert", async (ctx) => {
@@ -367,7 +368,7 @@ bot.command("alerts", async (ctx) => {
   if (alerts.length === 0) return ctx.reply("No price alerts set. Use `/setalert <contract> <price>` to add one.", { parse_mode: "Markdown" });
   const lines = alerts.map((a, i) => {
     const fired = a.lastFiredAt ? `Last fired: ${new Date(a.lastFiredAt).toUTCString()}` : "Not yet fired";
-    return `${i + 1}. \`${a.contract}\`\nTarget: *${a.targetPrice} ETH* | ${fired}`;
+    return `${i + 1}. *${a.name || "unnamed"}* — \`${a.contract}\`\nTarget: *${a.targetPrice} ETH* | ${fired}`;
   });
   await ctx.reply(`🔔 *Price Alerts (${alerts.length})*\n\n` + lines.join("\n\n"), { parse_mode: "Markdown" });
 });

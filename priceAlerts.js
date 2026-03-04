@@ -29,7 +29,7 @@ export function initPriceAlerts(notify) {
         if (cooldownPassed) {
           await notify(
             `🚨 *Price Alert Triggered!*\n` +
-            `Contract: \`${alert.contract}\`\n` +
+            `Collection: *${alert.name || alert.contract}*\n` +
             `Floor is now *${floor.toFixed(4)} ETH* ≥ target ${alert.targetPrice} ETH`
           );
           await updatePriceAlert(alert.id, { lastFiredAt: now });
