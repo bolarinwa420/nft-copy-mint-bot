@@ -280,7 +280,7 @@ bot.command("tracked", async (ctx) => {
   if (tracked.length === 0) {
     return ctx.reply("No wallets tracked yet.\nUse /track 0xAddress or upload a .txt file.");
   }
-  const list = tracked.map((a, i) => `${i + 1}. \`${shortAddr(a)}\``).join("\n");
+  const list = tracked.map((a, i) => `${i + 1}. \`${a}\``).join("\n");
   await ctx.reply(`🐋 *Tracked Wallets (${tracked.length}):*\n\n${list}`, {
     parse_mode: "Markdown",
   });
