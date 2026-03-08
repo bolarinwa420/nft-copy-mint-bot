@@ -157,6 +157,7 @@ bot.command("start", async (ctx) => {
     `/groupprivatekey <name> — export private keys for a group (file)\n` +
     `/deletegroup <name> — remove a group\n` +
     `/mint <contract> [group] [calldata] [value] — manual mint\n` +
+    `/decode <contract> — get mint function selectors\n` +
     `/whitelist <contract> — only auto-mint this contract\n` +
     `/unwhitelist <contract> — remove from whitelist\n` +
     `/blacklist <contract> — never auto-mint this contract\n` +
@@ -201,7 +202,8 @@ bot.command("commands", async (ctx) => {
     `/unblacklist <contract> — remove from blacklist\n\n` +
 
     `*🖐 Manual Mint*\n` +
-    `/mint <contract> [group] [calldata] [value] — fire mint now\n\n` +
+    `/mint <contract> [group] [calldata] [value] — fire mint now\n` +
+    `/decode <contract> — get mint function selectors\n\n` +
 
     `*💼 Wallets*\n` +
     `/wallets — list all sub-wallets with balances\n` +
@@ -1029,6 +1031,140 @@ bot.command("mint", async (ctx) => {
   } catch (err) {
     await ctx.reply(`❌ Mint failed: ${err.message}`);
   }
+});
+
+// ─── Decode Contract ──────────────────────────────────────────────────────────
+
+const MINT_KEYWORDS = ["mint", "claim", "purchase", "buy", "presale", "allowlist", "whitelist"];
+
+// Common mint selectors to probe when ABI isn't available
+const KNOWN_SELECTORS = [
+  { selector: "0x1249c58b", sig: "mint()" },
+  { selector: "0x40c10f19", sig: "mint(address,uint256)" },
+  { selector: "0xa0712d68", sig: "mint(uint256)" },
+  { selector: "0x6a627842", sig: "mint(address)" },
+  { selector: "0x4e71d92d", sig: "claim()" },
+  { selector: "0x379607f5", sig: "claim(uint256)" },
+  { selector: "0xd85d3d27", sig: "publicMint()" },
+  { selector: "0x3b4c4b25", sig: "publicMint(uint256)" },
+  { selector: "0x61a503b0", sig: "purchase(uint256)" },
+  { selector: "0xefef39a1", sig: "mintPublic(uint256)" },
+  { selector: "0x26092b83", sig: "freeMint()" },
+  { selector: "0x77d8d0a7", sig: "claimFree()" },
+];
+
+function computeSelector(item) {
+  const sig = `${item.name}(${item.inputs.map(i => i.type).join(",")})`;
+  return ethers.id(sig).slice(0, 10);
+}
+
+bot.command("decode", async (ctx) => {
+  const contract = ctx.match?.trim();
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply(
+      `*Decode Contract*\n\nFetches mint functions + selectors from Etherscan.\nFalls back to probing common selectors if contract isn't verified.\n\n` +
+      `Usage: \`/decode 0xContractAddress\`\n\n` +
+      `Then use the selector with:\n\`/mint 0xContract [group] 0xSELECTOR [value]\``,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  await ctx.reply(`🔍 Decoding \`${contract}\`...`, { parse_mode: "Markdown" });
+
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+
+  // ── Path 1: Etherscan ABI lookup ──
+  if (apiKey) {
+    try {
+      const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${contract}&apikey=${apiKey}`;
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json.status === "1") {
+        const abi = JSON.parse(json.result);
+
+        const mintFns = abi
+          .filter(item => item.type === "function" && item.stateMutability !== "view" && item.stateMutability !== "pure")
+          .filter(item => MINT_KEYWORDS.some(kw => item.name.toLowerCase().includes(kw)))
+          .map(item => {
+            const selector = computeSelector(item);
+            const params = item.inputs.map(i => `${i.type}${i.name ? " " + i.name : ""}`).join(", ");
+            const payable = item.stateMutability === "payable";
+            return { name: item.name, selector, params, payable };
+          });
+
+        if (mintFns.length > 0) {
+          const lines = mintFns.map(fn =>
+            `\`${fn.selector}\` — *${fn.name}*(${fn.params})${fn.payable ? " 💰" : ""}`
+          ).join("\n\n");
+
+          return ctx.reply(
+            `🔍 *Mint Functions — \`${contract.slice(0, 8)}...\`*\n\n${lines}\n\n` +
+            `💰 = payable (pass ETH value)\n\n` +
+            `Example: \`/mint ${contract} mine ${mintFns[0].selector}${mintFns[0].payable ? " 0.05" : ""}\``,
+            { parse_mode: "Markdown" }
+          );
+        }
+
+        // No mint-keyword functions — show all write functions
+        const allWrite = abi
+          .filter(item => item.type === "function" && item.stateMutability !== "view" && item.stateMutability !== "pure")
+          .slice(0, 12)
+          .map(item => {
+            const selector = computeSelector(item);
+            const payable = item.stateMutability === "payable";
+            return `\`${selector}\` — ${item.name}${payable ? " 💰" : ""}`;
+          });
+
+        return ctx.reply(
+          `⚠️ *No obvious mint functions found.*\n\nAll write functions on this contract:\n\n${allWrite.join("\n")}`,
+          { parse_mode: "Markdown" }
+        );
+      }
+      // If Etherscan returns non-"1", fall through to probe
+    } catch (_) {
+      // fall through
+    }
+  }
+
+  // ── Path 2: Probe common selectors ──
+  await ctx.reply(`⚙️ Contract not verified (or no API key). Probing ${KNOWN_SELECTORS.length} common selectors...`);
+
+  const hits = [];
+  await Promise.all(
+    KNOWN_SELECTORS.map(async ({ selector, sig }) => {
+      try {
+        await provider.call({ to: contract, data: selector });
+        // If we get here without "invalid opcode" / "function not found" it likely exists
+        hits.push({ selector, sig, status: "✅ responds" });
+      } catch (err) {
+        const msg = err.message || "";
+        // "invalid opcode" or no data = function probably doesn't exist
+        // Revert with actual reason = function exists but call failed (missing args, paused, etc.)
+        if (!msg.includes("invalid opcode") && !msg.includes("0x") === false) {
+          if (msg.includes("execution reverted") || msg.includes("revert") || msg.length < 200) {
+            hits.push({ selector, sig, status: "⚠️ reverts (exists, may need args/value)" });
+          }
+        }
+      }
+    })
+  );
+
+  if (hits.length === 0) {
+    return ctx.reply(
+      `❌ Couldn't identify mint functions on \`${contract.slice(0, 8)}...\`\n\n` +
+      `Try checking Etherscan manually for the Input Data on a recent tx.\n\n` +
+      `Add ETHERSCAN_API_KEY to Railway env for verified contract support.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const lines = hits.map(h => `\`${h.selector}\` — *${h.sig}* ${h.status}`).join("\n");
+  await ctx.reply(
+    `🔍 *Selector Probe — \`${contract.slice(0, 8)}...\`*\n\n${lines}\n\n` +
+    `Use: \`/mint ${contract} [group] <selector> [value]\``,
+    { parse_mode: "Markdown" }
+  );
 });
 
 // ─── Drop Watcher ─────────────────────────────────────────────────────────────
