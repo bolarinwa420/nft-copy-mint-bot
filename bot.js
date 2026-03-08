@@ -22,13 +22,17 @@ const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 
 // Bot notification function — sends to alert chat or falls back to admin
-async function notify(text, txHash) {
+async function notify(text, txHash, parseMode = "Markdown") {
   const settings = getSettings();
   const chatId = settings.alertChatId || process.env.ALERT_CHAT_ID;
-  if (!chatId) return;
+  if (!chatId) {
+    console.warn("[Notify] No alertChatId set — run /setalertchat in the bot to receive alerts.");
+    return;
+  }
+  console.log(`[Notify] Sending to chatId: ${chatId}`);
 
   let msg = text;
-  const opts = { parse_mode: "Markdown" };
+  const opts = parseMode ? { parse_mode: parseMode } : {};
 
   if (txHash) {
     const kb = new InlineKeyboard().url(
