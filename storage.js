@@ -17,6 +17,7 @@ const defaultData = {
   mintLog: [],       // [{ contract, wallet, txHash, ethSpent, timestamp }]
   watches: [],       // drop watchers: [{ id, nftContract, group, calldata, active, createdAt }]
   priceAlerts: [],   // floor price alerts: [{ id, contract, targetPrice, lastFiredAt, createdAt }]
+  sweepWatchers: [], // sweep watchers: [{ id, wallet, name, threshold, lastBlock, createdAt }]
 };
 
 let db;
@@ -231,6 +232,33 @@ export async function updatePriceAlert(id, patch) {
   const alert = db.data.priceAlerts.find(a => a.id === id);
   if (alert) {
     Object.assign(alert, patch);
+    await db.write();
+  }
+}
+
+// --- Sweep Watchers ---
+
+export async function addSweepWatcher(watcher) {
+  if (!db.data.sweepWatchers) db.data.sweepWatchers = [];
+  db.data.sweepWatchers.push(watcher);
+  await db.write();
+}
+
+export async function removeSweepWatcher(id) {
+  if (!db.data.sweepWatchers) return;
+  db.data.sweepWatchers = db.data.sweepWatchers.filter(w => w.id !== id);
+  await db.write();
+}
+
+export function getSweepWatchers() {
+  return db.data.sweepWatchers || [];
+}
+
+export async function updateSweepWatcher(id, patch) {
+  if (!db.data.sweepWatchers) return;
+  const watcher = db.data.sweepWatchers.find(w => w.id === id);
+  if (watcher) {
+    Object.assign(watcher, patch);
     await db.write();
   }
 }

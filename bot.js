@@ -1,13 +1,14 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { ethers } from "ethers";
-import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts } from "./storage.js";
+import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts, addSweepWatcher, removeSweepWatcher, getSweepWatchers } from "./storage.js";
 import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
+import { initSweepWatcher } from "./sweepWatcher.js";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
 initWatcher(provider, notify);
 initPriceAlerts(notify);
+initSweepWatcher(notify);
 startWatcher();
 await startTracking();
 
@@ -1249,6 +1251,112 @@ bot.command("unwatch", async (ctx) => {
   await ctx.reply(`🗑 Watch removed for \`${match.nftContract}\``, { parse_mode: "Markdown" });
 });
 
+// ─── Sweep Watcher ────────────────────────────────────────────────────────────
+
+bot.command("watchsweep", async (ctx) => {
+  const parts = ctx.match?.trim().split(/\s+/) || [];
+  const wallet = parts[0];
+
+  if (!wallet || !isValidAddress(wallet)) {
+    return ctx.reply(
+      `*Whale Sweep Watcher*\n\n` +
+      `Fires an alert when a wallet sweeps ≥N NFTs from the same collection within 5 minutes.\n\n` +
+      `Usage: \`/watchsweep <wallet> [name] [threshold]\`\n\n` +
+      `Examples:\n` +
+      `\`/watchsweep 0xdbd4...c495\` — defaults: name=wallet, threshold=3\n` +
+      `\`/watchsweep 0xdbd4...c495 TMA 5\` — alert when TMA sweeps 5+ from one collection`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  // Parse optional name and threshold
+  // If last part is a number, treat as threshold
+  let name = null;
+  let threshold = 3;
+  if (parts.length >= 3 && !isNaN(parseInt(parts[parts.length - 1]))) {
+    threshold = parseInt(parts[parts.length - 1]);
+    name = parts.slice(1, -1).join(" ") || null;
+  } else if (parts.length >= 2) {
+    name = parts.slice(1).join(" ");
+  }
+
+  const addr = wallet.toLowerCase();
+  const existing = getSweepWatchers().find(w => w.wallet === addr);
+  if (existing) {
+    return ctx.reply(`Already watching \`${addr}\` for sweeps.\n\nUse /sweepwatches to manage.`, { parse_mode: "Markdown" });
+  }
+
+  // Seed lastBlock to current block so we don't replay history
+  let startBlock = "latest";
+  try {
+    const alchemy = getAlchemy();
+    const blockNum = await alchemy.core.getBlockNumber();
+    startBlock = "0x" + blockNum.toString(16);
+  } catch (_) { /* fall back to "latest" */ }
+
+  const id = uuidv4();
+  await addSweepWatcher({
+    id,
+    wallet: addr,
+    name: name || (addr.slice(0, 6) + "..." + addr.slice(-4)),
+    threshold,
+    lastBlock: startBlock,
+    createdAt: Date.now(),
+  });
+
+  await ctx.reply(
+    `👁 *Sweep Watcher Active!*\n\n` +
+    `Wallet: \`${addr}\`\n` +
+    `Name: ${name || "—"}\n` +
+    `Alert threshold: ${threshold} NFTs from same collection in 5 min\n\n` +
+    `ID: \`${id.slice(0, 8)}\` — use /sweepwatches to manage`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("sweepwatches", async (ctx) => {
+  const watchers = getSweepWatchers();
+  if (watchers.length === 0) {
+    return ctx.reply(
+      "No sweep watchers active.\n\nUse `/watchsweep <wallet>` to add one.",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const lines = watchers.map(w => {
+    const date = new Date(w.createdAt).toLocaleDateString();
+    return (
+      `👁 *${w.name}*\n` +
+      `Wallet: \`${w.wallet}\`\n` +
+      `Threshold: ${w.threshold} NFTs | Added: ${date}\n` +
+      `ID: \`${w.id.slice(0, 8)}\``
+    );
+  });
+
+  await ctx.reply(
+    `*Sweep Watchers (${watchers.length})*\n\n` +
+    lines.join("\n\n─────────────────\n\n") +
+    `\n\nUse \`/unsweepwatch <id>\` to remove`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("unsweepwatch", async (ctx) => {
+  const input = ctx.match?.trim();
+  if (!input) {
+    return ctx.reply("Usage: `/unsweepwatch <id>`\n\nGet the ID from /sweepwatches", { parse_mode: "Markdown" });
+  }
+
+  const watchers = getSweepWatchers();
+  const match = watchers.find(w => w.id.startsWith(input) || w.id === input);
+  if (!match) {
+    return ctx.reply(`❌ No sweep watcher found with ID \`${input}\`\n\nUse /sweepwatches to list them`, { parse_mode: "Markdown" });
+  }
+
+  await removeSweepWatcher(match.id);
+  await ctx.reply(`🗑 Sweep watcher removed for *${match.name}* (\`${match.wallet}\`)`, { parse_mode: "Markdown" });
+});
+
 // ─── Gas Health Check ─────────────────────────────────────────────────────────
 
 bot.command("checkgas", async (ctx) => {
@@ -1704,6 +1812,10 @@ bot.start({
       { command: "unwatch",         description: "Remove a drop watcher" },
       // Settings
       { command: "setalertchat",    description: "Set this chat as the alert channel" },
+      // Sweep watcher
+      { command: "watchsweep",      description: "Alert when a wallet sweeps a collection" },
+      { command: "sweepwatches",    description: "List active sweep watchers" },
+      { command: "unsweepwatch",    description: "Remove a sweep watcher" },
     ]); console.log("[Bot] Commands registered with Telegram");
     } catch (e) { console.warn("[Bot] setMyCommands failed:", e.message); }
   },
