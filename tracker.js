@@ -52,6 +52,7 @@ export const mintEvents = new EventEmitter();
 
 let alchemy;
 let activeSubscription = null;
+let heartbeatInterval = null;
 
 export function initTracker(apiKey) {
   alchemy = new Alchemy({
@@ -60,6 +61,7 @@ export function initTracker(apiKey) {
   });
   console.log("[Tracker] Alchemy SDK initialized");
   startTMATracking();
+  startHeartbeat();
 }
 
 function startTMATracking() {
@@ -76,14 +78,10 @@ function startTMATracking() {
 
       const toAddr = transaction.to.toLowerCase();
       const marketplace = MARKETPLACE_CONTRACTS.get(toAddr);
+      if (!marketplace) return;
 
-      if (marketplace) {
-        console.log(`[TMA] Buy detected on ${marketplace} → ${transaction.hash}`);
-        tmaEvents.emit("tmaBuyDetected", { tx: transaction, marketplace });
-      } else if (isLikelyTMAMint(transaction)) {
-        console.log(`[TMA] Direct mint detected → ${transaction.to} | ${transaction.hash}`);
-        tmaEvents.emit("tmaBuyDetected", { tx: transaction, marketplace: `Direct Mint (${transaction.to.slice(0, 8)}...)` });
-      }
+      console.log(`[TMA] Buy detected on ${marketplace} → ${transaction.hash}`);
+      tmaEvents.emit("tmaBuyDetected", { tx: transaction, marketplace });
     }
   );
   console.log(`[TMA] Watching ${TMA_WALLET} for secondary market buys`);
@@ -98,21 +96,30 @@ function isMintTx(tx) {
   return MINT_SELECTORS.has(selector);
 }
 
-// For TMA specifically: fire on any non-marketplace contract call that
-// looks like a mint — known selector, has ETH value, or has calldata at all.
-// We'd rather have a false positive than miss a TMA buy.
-const SKIP_SELECTORS = new Set([
-  "0xa22cb465", // setApprovalForAll
-  "0x095ea7b3", // ERC20 approve
-  "0x23b872dd", // transferFrom
-  "0xa9059cbb", // ERC20 transfer
-]);
+// Heartbeat: ping Alchemy every 2 min via HTTP to verify the connection is alive.
+// If it fails, tear down and rebuild all WS subscriptions.
+function startHeartbeat() {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(async () => {
+    try {
+      await alchemy.core.getBlockNumber();
+      console.log("[Tracker] Heartbeat OK");
+    } catch (err) {
+      console.warn("[Tracker] Heartbeat failed — restarting subscriptions:", err.message);
+      await restartAllSubscriptions();
+    }
+  }, 2 * 60 * 1000); // every 2 minutes
+}
 
-function isLikelyTMAMint(tx) {
-  if (!tx.input || tx.input === "0x") return false;
-  const selector = tx.input.slice(0, 10).toLowerCase();
-  if (SKIP_SELECTORS.has(selector)) return false;
-  return true; // any other contract call from TMA = alert (better false positive than miss)
+async function restartAllSubscriptions() {
+  try {
+    alchemy.ws.removeAllListeners();
+    activeSubscription = null;
+  } catch (_) {}
+
+  startTMATracking();
+  await startTracking();
+  console.log("[Tracker] Subscriptions restarted");
 }
 
 export async function startTracking() {
