@@ -1,9 +1,8 @@
 import { ethers } from "ethers";
 import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 import { getSettings, logMint } from "./storage.js";
-import { mintEvents } from "./tracker.js";
+import { mintEvents, tmaEvents } from "./tracker.js";
 import { getAllSigners, getGroupSigners } from "./wallets.js";
-import { v4 as uuidv4 } from "uuid";
 
 const SEADROP_ADDRESS = "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
 const SEADROP_MINT_PUBLIC_SELECTOR = "0x161ac21f";
@@ -41,7 +40,8 @@ let telegramAskApproval;
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
-const MAX_MINT_USD = 0.15;
+const MAX_PAID_QUANTITY = 5;
+const THRESHOLD_ETH = ethers.parseEther("0.000043"); // ~$0.15 — per-unit ceiling
 const APPROVAL_TIMEOUT_MS = 120000;
 
 const pendingApprovals = new Map();
@@ -66,6 +66,83 @@ async function getEthUsdPrice() {
   }
 }
 
+// Mint quantity rules:
+//   Free (value=0)                          → no cap, mint max
+//   Paid, per-unit > THRESHOLD_ETH          → skip entirely
+//   Paid, 5 × per-unit ≤ THRESHOLD_ETH     → mint 5
+//   Paid, 1 × per-unit ≤ THRESHOLD_ETH
+//         but 5 × per-unit > THRESHOLD_ETH → mint 1
+async function adjustMintQuantity(rawData, txValue, isFree) {
+  const data = rawData || "0x";
+  const value = BigInt(txValue || 0);
+
+  // Free mint — no cap at all
+  if (isFree) return { data, value, skip: false, originalQty: null, newQty: null };
+
+  // Detect quantity from calldata
+  let originalQty = null;
+  let isSeaDrop = false;
+
+  if (data.slice(0, 10).toLowerCase() === SEADROP_MINT_PUBLIC_SELECTOR) {
+    try {
+      const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
+      originalQty = Number(decoded.quantity);
+      isSeaDrop = true;
+    } catch {}
+  }
+
+  if (originalQty === null && data.length === 74) {
+    const qty = parseInt(data.slice(10), 16);
+    if (qty > 0 && qty <= 10000) originalQty = qty;
+  }
+
+  if (originalQty === null && data.length > 74 && (data.length - 10) % 64 === 0) {
+    const lastWord = parseInt(data.slice(-64), 16);
+    if (lastWord > 0 && lastWord <= 10000) originalQty = lastWord;
+  }
+
+  const effectiveQty = originalQty || 1;
+  const pricePerNft = value / BigInt(effectiveQty);
+
+  // Per-unit exceeds threshold → skip
+  if (pricePerNft > THRESHOLD_ETH) {
+    return { data, value, skip: true, originalQty, newQty: 0, pricePerNft };
+  }
+
+  // Quantity is 1 or unknown — no re-encoding needed, just send
+  if (!originalQty || originalQty <= 1) {
+    return { data, value, skip: false, originalQty, newQty: 1 };
+  }
+
+  // 5 units affordable → mint 5, otherwise mint 1
+  const newQty = pricePerNft * BigInt(MAX_PAID_QUANTITY) <= THRESHOLD_ETH
+    ? MAX_PAID_QUANTITY
+    : 1;
+
+  if (newQty >= originalQty) return { data, value, skip: false, originalQty, newQty: originalQty };
+
+  // Re-encode calldata with new quantity
+  let newData = data;
+  if (isSeaDrop) {
+    try {
+      const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
+      newData = SEADROP_IFACE.encodeFunctionData("mintPublic", [
+        decoded.nftContract,
+        decoded.feeRecipient || OPENSEA_FEE_RECIPIENT,
+        ethers.ZeroAddress,
+        newQty,
+      ]);
+    } catch {}
+  } else if (data.length === 74) {
+    newData = data.slice(0, 10) + newQty.toString(16).padStart(64, "0");
+  } else {
+    newData = data.slice(0, -64) + newQty.toString(16).padStart(64, "0");
+  }
+
+  const newValue = pricePerNft * BigInt(newQty);
+  return { data: newData, value: newValue, skip: false, originalQty, newQty };
+}
+
 export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn) {
   provider = ethProvider;
   mainSigner = signer;
@@ -85,7 +162,22 @@ export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn)
   }
 
   mintEvents.on("mintDetected", handleMintDetected);
+  tmaEvents.on("tmaBuyDetected", handleTMABuy);
   console.log("[CopyMint] Listening for whale mints...");
+}
+
+async function handleTMABuy({ tx, marketplace }) {
+  const txValue = tx.value ? BigInt(tx.value) : 0n;
+  const ethAmount = parseFloat(ethers.formatEther(txValue));
+  const ethPrice = await getEthUsdPrice();
+  const usdCost = (ethAmount * ethPrice).toFixed(2);
+
+  await telegramNotify(
+    `🛒 *TMA Buy Alert!*\n\n` +
+    `Marketplace: ${marketplace}\n` +
+    `Paid: ${ethAmount.toFixed(4)} ETH ($${usdCost})\n` +
+    `TX: [${tx.hash?.slice(0, 10)}...](https://etherscan.io/tx/${tx.hash})`
+  );
 }
 
 async function handleMintDetected({ whale, contract, tx }) {
@@ -119,62 +211,35 @@ async function handleMintDetected({ whale, contract, tx }) {
     return;
   }
 
-  const ethPrice = await getEthUsdPrice();
   const ethAmount = parseFloat(ethers.formatEther(txValue));
+  const ethPrice = await getEthUsdPrice();
   const usdCost = ethAmount * ethPrice;
-  const maxUsd = parseFloat(settings.maxMintUsd ?? MAX_MINT_USD);
 
   const alertMsg =
     `🐋 *Whale Mint Detected!*\n\n` +
     `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
     `Contract: \`${contract}\`\n` +
-    `Price: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
+    `Whale paid: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
     `Chain: Ethereum\n` +
     `Auto-Mint: ${settings.autoMint ? "✅ Checking..." : "❌ Off"}`;
 
   await telegramNotify(alertMsg);
   if (!settings.autoMint) return;
 
-  if (txValue === 0n) {
-    await Promise.all([
-      executeCopyMint(tx, settings.mevShield),
-      executeSubWalletMints(tx),
-    ]);
+  // mintSigned = signature locked to whale's wallet — skip entirely, sub-wallets included
+  const rawData = tx.input || tx.data || "0x";
+  if (rawData.slice(0, 10).toLowerCase() === SEADROP_MINT_SIGNED_SELECTOR) {
+    await telegramNotify(
+      `🔒 *Signed Mint — Skipped*\n\n` +
+      `Guaranteed/allowlist drop. The signature is tied to the whale's wallet and cannot be copied.`
+    );
     return;
   }
 
-  if (usdCost <= maxUsd) {
-    await telegramNotify(`✅ Price $${usdCost.toFixed(2)} is under $${maxUsd} limit — minting automatically...`);
-    await Promise.all([
-      executeCopyMint(tx, settings.mevShield),
-      executeSubWalletMints(tx),
-    ]);
-    return;
-  }
-
-  const mintId = uuidv4();
-  await telegramAskApproval({
-    mintId,
-    usdCost: usdCost.toFixed(2),
-    ethAmount: ethAmount.toFixed(6),
-    maxUsd,
-    contract,
-    whale,
-  });
-
-  try {
-    const approved = await waitForApproval(mintId);
-    if (approved) {
-      await Promise.all([
-        executeCopyMint(tx, settings.mevShield),
-        executeSubWalletMints(tx),
-      ]);
-    } else {
-      await telegramNotify(`⏭️ Mint skipped.`);
-    }
-  } catch {
-    await telegramNotify(`⏰ No response in 2 minutes — mint skipped automatically.`);
-  }
+  await Promise.all([
+    executeCopyMint(tx, settings.mevShield),
+    executeSubWalletMints(tx),
+  ]);
 }
 
 function waitForApproval(mintId) {
@@ -200,19 +265,27 @@ const SEADROP_MINT_SIGNED_SELECTOR = "0x4b61cd6f";
 
 export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
+  const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
+  const { data: adjData, value: adjValue, skip, originalQty, newQty } =
+    await adjustMintQuantity(rawData, rawTxValue, rawTxValue === 0n);
 
-  // mintSigned = signature locked to whale's wallet — cannot copy
-  if (rawData.slice(0, 10).toLowerCase() === SEADROP_MINT_SIGNED_SELECTOR) {
+  if (skip) {
     await telegramNotify(
-      `🔒 *Signed Mint — Skipped*\n\n` +
-      `This was a guaranteed/allowlist drop. The signature is tied to the whale's wallet and cannot be copied.`
+      `⛔ *Main Wallet — Skipped*\n\nPer-unit price exceeds 0.000043 ETH (~$0.15) — not minting.`
     );
     return;
   }
+
+  if (newQty !== null && newQty !== originalQty) {
+    await telegramNotify(
+      `⚠️ *Quantity Adjusted (Main Wallet)*\n\nWhale minted ×${originalQty} → minting ×${newQty}`
+    );
+  }
+
   const mintTx = {
     to: whaleTx.to,
-    data: fixSeaDropCalldata(whaleTx.to, rawData),
-    value: whaleTx.value ? BigInt(whaleTx.value) : 0n,
+    data: fixSeaDropCalldata(whaleTx.to, adjData),
+    value: adjValue,
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
       : 300000n,
@@ -281,7 +354,26 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     : getAllSigners(provider);
   if (signers.length === 0) return;
 
-  const txValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
+  const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
+  const { data: adjSubData, value: txValue, skip: subSkip, originalQty: subOrigQty, newQty: subNewQty } =
+    await adjustMintQuantity(
+      whaleTx.input || whaleTx.data || "0x",
+      rawTxValue,
+      rawTxValue === 0n
+    );
+
+  if (subSkip) {
+    await telegramNotify(
+      `⛔ *Sub-Wallets — Skipped*\n\nPer-unit price exceeds 0.000043 ETH (~$0.15) — not minting on any wallet.`
+    );
+    return;
+  }
+
+  if (subNewQty !== null && subNewQty !== subOrigQty) {
+    await telegramNotify(
+      `⚠️ *Quantity Adjusted (Sub-Wallets)*\n\nWhale minted ×${subOrigQty} → minting ×${subNewQty} per wallet`
+    );
+  }
 
   const feeData = await provider.getFeeData();
   const maxFeePerGas = feeData.maxFeePerGas
@@ -335,11 +427,10 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     return;
   }
 
-  const rawSubData = whaleTx.input || whaleTx.data || "0x";
-  const fixedSubData = fixSeaDropCalldata(whaleTx.to, rawSubData);
+  const fixedSubData = fixSeaDropCalldata(whaleTx.to, adjSubData);
   const mintTx = {
     to: whaleTx.to,
-    data: buildSingleMintData(fixedSubData),
+    data: fixedSubData,
     value: txValue,
     gasLimit: whaleTx.gas
       ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
@@ -387,7 +478,6 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
     throw new Error(groupName ? `Group "${groupName}" not found or empty` : "No sub-wallets configured");
   }
 
-  const GAS_BUFFER = ethers.parseEther("0.015");
   const feeData = await provider.getFeeData();
   const maxFeePerGas = feeData.maxFeePerGas
     ? (feeData.maxFeePerGas * 120n) / 100n
@@ -395,6 +485,7 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
     ? feeData.maxPriorityFeePerGas
     : ethers.parseUnits("2", "gwei");
+  const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n; // dynamic: based on live gas price
 
   const funded = (
     await Promise.all(
