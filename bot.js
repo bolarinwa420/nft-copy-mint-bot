@@ -977,30 +977,73 @@ bot.command("togglefreemints", async (ctx) => {
 
 // ─── Manual Mint ──────────────────────────────────────────────────────────────
 
+// Known selectors that accept uint256 quantity as first param
+const QTY_SELECTORS = {
+  "0xa0712d68": "mint(uint256)",
+  "0x379607f5": "claim(uint256)",
+  "0x3b4c4b25": "publicMint(uint256)",
+  "0x61a503b0": "purchase(uint256)",
+  "0xefef39a1": "mintPublic(uint256)",
+};
+
+async function autoDetectCalldata(contract, qty = 1) {
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${contract}&sort=desc&page=1&offset=20&apikey=${apiKey}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.status !== "1" || !Array.isArray(json.result)) return null;
+
+    for (const tx of json.result) {
+      if (tx.to?.toLowerCase() !== contract.toLowerCase()) continue;
+      const input = tx.input || "";
+      const selector = input.slice(0, 10).toLowerCase();
+
+      // Selector takes a uint256 quantity — re-encode with desired qty
+      if (QTY_SELECTORS[selector]) {
+        const encodedQty = qty.toString(16).padStart(64, "0");
+        return { calldata: selector + encodedQty, sig: QTY_SELECTORS[selector], qty, autoDetected: true };
+      }
+
+      // No-arg mint selectors — use as-is
+      if (["0x1249c58b", "0x4e71d92d", "0xd85d3d27", "0x26092b83", "0x77d8d0a7"].includes(selector)) {
+        return { calldata: selector, sig: selector, qty: null, autoDetected: true };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 bot.command("mint", async (ctx) => {
   const input = ctx.match?.trim();
   if (!input) {
     return ctx.reply(
       `*Manual Mint*\n\n` +
-      `Usage: \`/mint <contract> [group] [calldata] [value_eth]\`\n\n` +
+      `Usage: \`/mint <contract> [group] [calldata|qty:N] [value_eth]\`\n\n` +
       `Examples:\n` +
-      `\`/mint 0xContract\` — all wallets, default calldata\n` +
-      `\`/mint 0xContract mine\` — group 'mine' only\n` +
-      `\`/mint 0xContract mine 0.05\` — group + pay 0.05 ETH each\n` +
-      `\`/mint 0xContract mine 0x1249c58b 0.05\` — custom calldata`,
+      `\`/mint 0xContract\` — auto-detect calldata, qty 1\n` +
+      `\`/mint 0xContract mine qty:5\` — auto-detect, mint 5 per wallet\n` +
+      `\`/mint 0xContract mine qty:4 0.05\` — qty 4, pay 0.05 ETH each\n` +
+      `\`/mint 0xContract mine 0x1249c58b 0.05\` — manual calldata`,
       { parse_mode: "Markdown" }
     );
   }
 
   // Smart parser: detect each arg by format
-  const args = input.split(/\s+/);
-  let contract = null, group = null, calldata = null, value = "0";
+  // Rejoin hex fragments split by Telegram line-wrapping
+  const rejoined = input.replace(/([0-9a-fA-F]+)\n\s*([0-9a-fA-F])/g, "$1$2").replace(/\n/g, " ");
+  const args = rejoined.split(/\s+/);
+  let contract = null, group = null, calldata = null, value = "0", qty = null;
 
   for (const arg of args) {
     if (/^0x[0-9a-fA-F]{40}$/.test(arg) && !contract) {
       contract = arg;
     } else if (/^0x[0-9a-fA-F]{8,}$/.test(arg)) {
       calldata = arg;
+    } else if (/^qty:\d+$/i.test(arg)) {
+      qty = parseInt(arg.split(":")[1]);
     } else if (/^\d*\.?\d+$/.test(arg)) {
       value = arg;
     } else if (/^[a-zA-Z0-9_-]+$/.test(arg)) {
@@ -1009,7 +1052,17 @@ bot.command("mint", async (ctx) => {
   }
 
   if (!contract) {
-    return ctx.reply("❌ Provide a valid contract address.\n\nUsage: `/mint 0xContract [group] [calldata] [value]`", { parse_mode: "Markdown" });
+    return ctx.reply("❌ Provide a valid contract address.\n\nUsage: `/mint 0xContract [group] [qty:N] [calldata] [value]`", { parse_mode: "Markdown" });
+  }
+
+  // Auto-detect calldata if not provided
+  let autoDetectNote = "";
+  if (!calldata) {
+    const detected = await autoDetectCalldata(contract, qty || 1);
+    if (detected) {
+      calldata = detected.calldata;
+      autoDetectNote = `\nAuto-detected: \`${detected.sig}\`${detected.qty ? ` × ${detected.qty}` : ""}`;
+    }
   }
 
   const target = group ? `group *${group}*` : "all sub-wallets";
@@ -1020,7 +1073,8 @@ bot.command("mint", async (ctx) => {
     `Contract: \`${shortAddr(contract)}\`\n` +
     `Wallets: ${target}\n` +
     `Value: ${ethVal} ETH each\n` +
-    `Calldata: \`${calldata || "default mint()"}\``,
+    `Calldata: \`${calldata || "default mint()"}\`` +
+    autoDetectNote,
     { parse_mode: "Markdown" }
   );
 
