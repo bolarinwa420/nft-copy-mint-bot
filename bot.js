@@ -208,6 +208,7 @@ bot.command("commands", async (ctx) => {
     `/unblacklist <contract> — remove from blacklist\n\n` +
 
     `*🖐 Manual Mint*\n` +
+    `/sniff <contract> [group] [value] — auto-grab calldata + mint instantly\n` +
     `/mint <contract> [group] [calldata] [value] — fire mint now\n` +
     `/decode <contract> — get mint function selectors\n\n` +
 
@@ -996,9 +997,12 @@ async function autoDetectCalldata(contract, qty = 1) {
     const json = await res.json();
     if (json.status !== "1" || !Array.isArray(json.result)) return null;
 
+    const MINT_LIKE = ["mint", "claim", "purchase", "free", "public"];
     for (const tx of json.result) {
       if (tx.to?.toLowerCase() !== contract.toLowerCase()) continue;
+      if (tx.isError !== "0") continue;
       const input = tx.input || "";
+      if (input.length < 10 || input === "0x") continue;
       const selector = input.slice(0, 10).toLowerCase();
 
       // Selector takes a uint256 quantity — re-encode with desired qty
@@ -1011,6 +1015,10 @@ async function autoDetectCalldata(contract, qty = 1) {
       if (["0x1249c58b", "0x4e71d92d", "0xd85d3d27", "0x26092b83", "0x77d8d0a7"].includes(selector)) {
         return { calldata: selector, sig: selector, qty: null, autoDetected: true };
       }
+
+      // Fallback: return full raw calldata from any successful tx with a mint-like method
+      // (covers custom selectors like scatter.art's 0x4a21a2df)
+      return { calldata: input, sig: selector, qty: null, autoDetected: true, rawSniff: true };
     }
   } catch (_) {}
   return null;
@@ -1225,6 +1233,81 @@ bot.command("decode", async (ctx) => {
     `Use: \`/mint ${contract} [group] <selector> [value]\``,
     { parse_mode: "Markdown" }
   );
+});
+
+// ─── Sniff & Mint ─────────────────────────────────────────────────────────────
+
+bot.command("sniff", async (ctx) => {
+  const parts = (ctx.match?.trim() || "").split(/\s+/);
+  const contract = parts[0];
+  const group = parts[1] && !/^\d*\.?\d+$/.test(parts[1]) ? parts[1] : null;
+  const value = parts[group ? 2 : 1] || "0";
+
+  if (!contract || !isValidAddress(contract)) {
+    return ctx.reply(
+      `*Sniff & Mint*\n\n` +
+      `Grabs calldata from the most recent successful mint tx on a contract, then fires on your wallets immediately.\n\n` +
+      `Usage: \`/sniff <contract> [group] [value_eth]\`\n\n` +
+      `Examples:\n` +
+      `\`/sniff 0xContract\` — sniff + mint all wallets\n` +
+      `\`/sniff 0xContract karlkestis\` — sniff + mint group\n` +
+      `\`/sniff 0xContract karlkestis 0.05\` — with ETH value`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+  if (!apiKey) return ctx.reply("❌ ETHERSCAN_API_KEY not set.");
+
+  await ctx.reply(`🔍 Sniffing recent txs on \`${shortAddr(contract)}\`...`, { parse_mode: "Markdown" });
+
+  try {
+    const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${contract}&sort=desc&page=1&offset=50&apikey=${apiKey}`;
+    const res = await fetch(url);
+    const json = await res.json();
+
+    if (json.status !== "1" || !Array.isArray(json.result)) {
+      return ctx.reply("❌ Etherscan returned no transactions. Contract may be too new or address is wrong.");
+    }
+
+    const successfulMints = json.result.filter(tx =>
+      tx.to?.toLowerCase() === contract.toLowerCase() &&
+      tx.isError === "0" &&
+      tx.input?.length > 10 &&
+      tx.input !== "0x"
+    );
+
+    if (!successfulMints.length) {
+      return ctx.reply("❌ No successful txs found yet. Either no one has minted or the mint hasn't started.");
+    }
+
+    const best = successfulMints[0];
+    const calldata = best.input;
+    const selector = calldata.slice(0, 10);
+    const target = group ? `group *${group}*` : "all sub-wallets";
+
+    await ctx.reply(
+      `✅ *Calldata sniffed!*\n\n` +
+      `Selector: \`${selector}\`\n` +
+      `From tx: \`${best.hash.slice(0, 18)}...\`\n` +
+      `Wallets: ${target}\n` +
+      `Value: ${value} ETH each\n\n` +
+      `⚡ Firing mint...`,
+      { parse_mode: "Markdown" }
+    );
+
+    const { succeeded, failed, skipped, total } = await executeManualMint(contract, calldata, value, group || null);
+    await ctx.reply(
+      `✅ *Sniff & Mint Complete!*\n\n` +
+      `✅ Succeeded: ${succeeded}\n` +
+      `❌ Failed: ${failed}\n` +
+      `⏭️ Skipped (low balance): ${skipped}\n` +
+      `📊 Total wallets: ${total}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Sniff failed: ${err.message}`);
+  }
 });
 
 // ─── Drop Watcher ─────────────────────────────────────────────────────────────
