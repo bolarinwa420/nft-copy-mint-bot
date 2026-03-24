@@ -470,12 +470,15 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
   const value = valueEth ? ethers.parseEther(valueEth.toString()) : 0n;
   const data = calldata || "0x1249c58b"; // standard mint() selector
 
-  const signers = groupName
+  const subSigners = groupName
     ? getGroupSigners(groupName, provider)
     : getAllSigners(provider);
 
-  if (signers.length === 0) {
-    throw new Error(groupName ? `Group "${groupName}" not found or empty` : "No sub-wallets configured");
+  // Always include main wallet
+  const signers = [mainSigner, ...subSigners];
+
+  if (subSigners.length === 0 && !groupName) {
+    throw new Error("No sub-wallets configured");
   }
 
   const feeData = await provider.getFeeData();
