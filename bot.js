@@ -1627,7 +1627,7 @@ bot.command("topup", async (ctx) => {
     const currentUsd = (w.eth * ethPrice).toFixed(3);
     const neededEth = Math.max(0, targetEth - w.eth);
     const neededUsd = (neededEth * ethPrice).toFixed(3);
-    return `#${w.index} \`${shortAddr(w.address)}\` — $${currentUsd} → need +$${neededUsd} (+${neededEth.toFixed(6)} ETH)`;
+    return `#${w.index} \`${w.address}\` — $${currentUsd} → need +$${neededUsd} (+${neededEth.toFixed(6)} ETH)`;
   });
 
   const CHUNK = 30;
