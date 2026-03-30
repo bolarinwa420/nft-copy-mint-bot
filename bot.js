@@ -157,6 +157,7 @@ bot.command("start", async (ctx) => {
     `/sweepgas — pull ETH back to main wallet\n` +
     `/sweepnfts <contract> — sweep NFTs to main wallet\n` +
     `/checkgas [min_eth] — show wallets with low gas\n` +
+    `/topup [usd] — show how much ETH each wallet needs to reach a USD target (default $0.30)\n` +
     `/creategroup <name> <from> <to> — assign wallet range to a person\n` +
     `/groups — list all groups\n` +
     `/groupwallets <name> — show wallets in a group\n` +
@@ -217,6 +218,7 @@ bot.command("commands", async (ctx) => {
     `/addwallet <privkey> — add a sub-wallet\n` +
     `/removewallet <address> — remove a sub-wallet\n` +
     `/checkgas [min_eth] — show wallets with low gas\n` +
+    `/topup [usd] — show how much ETH each wallet needs to reach a USD target (default $0.30)\n` +
     `/distribute <eth> [group] — send ETH to wallets\n` +
     `/sweepgas — pull all ETH back to main wallet\n` +
     `/sweepnfts <contract> — sweep NFTs to main wallet\n\n` +
@@ -1543,6 +1545,85 @@ bot.command("checkgas", async (ctx) => {
   );
 });
 
+// ─── Top-Up Calculator ────────────────────────────────────────────────────────
+
+bot.command("topup", async (ctx) => {
+  const input = ctx.match?.trim().replace(/[^\d.]/g, "");
+  const targetUsd = input ? parseFloat(input) : 0.3;
+  if (isNaN(targetUsd) || targetUsd <= 0) {
+    return ctx.reply("Usage: `/topup [usd_target]`\nExample: `/topup 0.3`", { parse_mode: "Markdown" });
+  }
+
+  const wallets = listWallets();
+  if (wallets.length === 0) return ctx.reply("No sub-wallets configured.");
+
+  await ctx.reply(`🔍 Fetching balances + ETH price...`);
+
+  let ethPrice = 2000;
+  try {
+    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
+    const d = await r.json();
+    ethPrice = d.ethereum.usd ?? 2000;
+  } catch { /* use fallback */ }
+
+  const targetEth = targetUsd / ethPrice;
+
+  // Batch balance fetches 10 at a time to avoid rate limits
+  const results = [];
+  for (let i = 0; i < wallets.length; i += 10) {
+    const batch = wallets.slice(i, i + 10);
+    const batchResults = await Promise.all(
+      batch.map(async (addr, j) => {
+        try {
+          const bal = await provider.getBalance(addr);
+          const eth = parseFloat(ethers.formatEther(bal));
+          return { index: i + j + 1, address: addr, eth };
+        } catch {
+          return { index: i + j + 1, address: addr, eth: 0 };
+        }
+      })
+    );
+    results.push(...batchResults);
+  }
+
+  const needsTopup = results.filter(w => w.eth < targetEth);
+  const alreadyFunded = results.length - needsTopup.length;
+
+  if (needsTopup.length === 0) {
+    return ctx.reply(
+      `✅ All ${wallets.length} wallets already have ≥ $${targetUsd} (${targetEth.toFixed(6)} ETH @ $${ethPrice.toFixed(0)})\n\nNothing to do.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const totalNeededEth = needsTopup.reduce((sum, w) => sum + Math.max(0, targetEth - w.eth), 0);
+  const totalNeededUsd = totalNeededEth * ethPrice;
+
+  // Build list — split into chunks if too long
+  const lines = needsTopup.map(w => {
+    const currentUsd = (w.eth * ethPrice).toFixed(3);
+    const neededEth = Math.max(0, targetEth - w.eth);
+    const neededUsd = (neededEth * ethPrice).toFixed(3);
+    return `#${w.index} \`${shortAddr(w.address)}\` — $${currentUsd} → need +$${neededUsd} (+${neededEth.toFixed(6)} ETH)`;
+  });
+
+  const CHUNK = 30;
+  for (let i = 0; i < lines.length; i += CHUNK) {
+    const chunk = lines.slice(i, i + CHUNK);
+    const isLast = i + CHUNK >= lines.length;
+    const footer = isLast
+      ? `\n\n📊 *Summary*\n` +
+        `• ETH price: $${ethPrice.toFixed(0)}\n` +
+        `• Target per wallet: $${targetUsd} (${targetEth.toFixed(6)} ETH)\n` +
+        `• Wallets needing top-up: ${needsTopup.length}/${wallets.length}\n` +
+        `• Already funded: ${alreadyFunded}\n` +
+        `• Total ETH needed: ${totalNeededEth.toFixed(6)} ETH (~$${totalNeededUsd.toFixed(2)})\n\n` +
+        `_Run /distribute ${totalNeededEth.toFixed(6)} to fund all at once_`
+      : "";
+    await ctx.reply(`💰 *Top-Up to $${targetUsd}* (${i === 0 ? "" : "cont."})\n\n${chunk.join("\n")}${footer}`, { parse_mode: "Markdown" });
+  }
+});
+
 // ─── Profit Tracker ───────────────────────────────────────────────────────────
 
 async function getFloorPrice(contractAddress) {
@@ -1923,6 +2004,7 @@ bot.start({
       { command: "addwallet",       description: "Add a sub-wallet" },
       { command: "removewallet",    description: "Remove a sub-wallet" },
       { command: "checkgas",        description: "Show wallets with low gas" },
+      { command: "topup",           description: "Show how much ETH each wallet needs to reach a USD target" },
       { command: "distribute",      description: "Send ETH to wallets or group" },
       { command: "sweepgas",        description: "Pull all ETH back to main wallet" },
       { command: "sweepnfts",       description: "Sweep NFTs to main wallet" },
