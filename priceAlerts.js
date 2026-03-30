@@ -1,35 +1,38 @@
 import { getPriceAlerts, updatePriceAlert } from "./storage.js";
+import { getAlchemy } from "./tracker.js";
 
 const POLL_INTERVAL = 2 * 60 * 1000;  // check every 2 minutes
 const COOLDOWN = 30 * 60 * 1000;      // re-alert max once per 30 min per contract
 
 export async function getFloorPrice(contract) {
   try {
-    // Primary: Reservoir (works with contract address)
-    const res = await fetch(
-      `https://api.reservoir.tools/collections/v7?id=${contract}`,
-      { headers: { "x-api-key": "demo" } }
-    );
-    if (!res.ok) {
-      console.warn(`[PriceAlerts] Reservoir HTTP ${res.status} for ${contract}`);
-    } else {
-      const data = await res.json();
-      const floor = data.collections?.[0]?.floorAsk?.price?.amount?.native ?? null;
-      if (floor !== null) return floor;
-      console.warn(`[PriceAlerts] Reservoir returned no floor for ${contract} — collections: ${JSON.stringify(data.collections?.length)}`);
+    const alchemy = getAlchemy();
+    if (!alchemy) {
+      console.warn("[PriceAlerts] Alchemy not initialized yet");
+      return null;
     }
 
-    // Fallback: OpenSea public stats endpoint (no key needed)
-    const res2 = await fetch(
-      `https://api.opensea.io/api/v2/collections/${contract}/stats`,
-      { headers: { "accept": "application/json" } }
-    );
-    if (res2.ok) {
-      const data2 = await res2.json();
-      return data2?.total?.floor_price ?? null;
+    const result = await alchemy.nft.getFloorPrice(contract);
+
+    // Collect non-error prices from all marketplaces
+    const prices = [];
+    for (const [market, data] of Object.entries(result)) {
+      if (data?.error) {
+        console.warn(`[PriceAlerts] ${market} error for ${contract}: ${data.error}`);
+        continue;
+      }
+      if (data?.floorPrice != null && data?.priceCurrency === "ETH") {
+        prices.push(data.floorPrice);
+      }
     }
-    console.warn(`[PriceAlerts] OpenSea fallback HTTP ${res2.status} for ${contract}`);
-    return null;
+
+    if (prices.length === 0) {
+      console.warn(`[PriceAlerts] No floor price found for ${contract}`);
+      return null;
+    }
+
+    // Return the lowest floor across all markets (most conservative)
+    return Math.min(...prices);
   } catch (e) {
     console.error(`[PriceAlerts] getFloorPrice error for ${contract}: ${e.message}`);
     return null;
@@ -43,7 +46,7 @@ export function initPriceAlerts(notify) {
       const floor = await getFloorPrice(alert.contract);
       console.log(`[PriceAlerts] ${alert.name} — floor: ${floor} | target: ${alert.targetPrice}`);
       if (floor === null) {
-        console.log(`[PriceAlerts] Reservoir returned null for ${alert.contract}`);
+        console.log(`[PriceAlerts] No price data for ${alert.contract} — skipping`);
         continue;
       }
 
@@ -55,8 +58,8 @@ export function initPriceAlerts(notify) {
             `🚨 Price Alert Triggered!\n` +
             `Collection: ${alert.name || alert.contract}\n` +
             `Floor is now ${floor.toFixed(4)} ETH (target: ${alert.targetPrice} ETH)`,
-            null,  // no txHash
-            null   // no parseMode — plain text avoids Markdown parse errors
+            null,
+            null
           );
           await updatePriceAlert(alert.id, { lastFiredAt: now });
         } else {
@@ -70,5 +73,5 @@ export function initPriceAlerts(notify) {
   // Run once immediately, then on interval
   poll().catch(console.error);
   setInterval(() => poll().catch(console.error), POLL_INTERVAL);
-  console.log("[PriceAlerts] Polling started (2 min interval)");
+  console.log("[PriceAlerts] Polling started (2 min interval, Alchemy NFT API)");
 }
