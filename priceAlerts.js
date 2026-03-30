@@ -14,25 +14,17 @@ export async function getFloorPrice(contract) {
 
     const result = await alchemy.nft.getFloorPrice(contract);
 
-    // Collect non-error prices from all marketplaces
-    const prices = [];
-    for (const [market, data] of Object.entries(result)) {
-      if (data?.error) {
-        console.warn(`[PriceAlerts] ${market} error for ${contract}: ${data.error}`);
-        continue;
-      }
-      if (data?.floorPrice != null && data?.priceCurrency === "ETH") {
-        prices.push(data.floorPrice);
-      }
+    const openSea = result?.openSea;
+    if (openSea?.error) {
+      console.warn(`[PriceAlerts] OpenSea error for ${contract}: ${openSea.error}`);
+      return null;
     }
-
-    if (prices.length === 0) {
-      console.warn(`[PriceAlerts] No floor price found for ${contract}`);
+    if (openSea?.floorPrice == null || openSea?.priceCurrency !== "ETH") {
+      console.warn(`[PriceAlerts] No OpenSea floor price for ${contract}`);
       return null;
     }
 
-    // Return the lowest floor across all markets (most conservative)
-    return Math.min(...prices);
+    return openSea.floorPrice;
   } catch (e) {
     console.error(`[PriceAlerts] getFloorPrice error for ${contract}: ${e.message}`);
     return null;
