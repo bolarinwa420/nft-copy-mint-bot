@@ -112,7 +112,7 @@ async function getCollectionMeta(contractAddress, apiKey) {
       const raw = collData.fees || [];
       console.log("[listing] collection fees raw:", JSON.stringify(raw));
       fees = raw.filter((f) => f.fee > 0 && f.recipient).map((f) => ({
-        feeBps:    f.fee,       // plain number — BigInt only at arithmetic time
+        feeBps:    f.fee * 100, // OpenSea API returns % * 100 (e.g. 1 = 1% = 100 bps)
         recipient: f.recipient,
       }));
       const fp = collData.floor_price ?? collData.stats?.floor_price;
@@ -122,12 +122,15 @@ async function getCollectionMeta(contractAddress, apiKey) {
     }
   }
 
-  // Fallback: derive real fee structure from an existing active listing
-  if (fees.length === 0) {
-    fees = await getFeesFromExistingListing(contractAddress, apiKey);
+  // Always try existing listing first — it already passed OS validation so fees are guaranteed correct
+  const listingFees = await getFeesFromExistingListing(contractAddress, apiKey);
+  if (listingFees.length > 0) {
+    console.log("[listing] using fees from existing listing:", JSON.stringify(listingFees));
+    fees = listingFees;
+  } else {
+    console.log("[listing] no existing listing found, using collection API fees:", JSON.stringify(fees));
   }
 
-  console.log("[listing] resolved fees:", JSON.stringify(fees));
   return { slug, fees, name, floor };
 }
 
@@ -297,6 +300,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
       };
 
       const signature = await signer.signTypedData(domain, EIP712_TYPES, orderComponents);
+      console.log("[listing] consideration:", JSON.stringify(orderComponents.consideration));
 
       const postRes = await fetch(`${OPENSEA_API}/orders/ethereum/seaport/listings`, {
         method: "POST",
