@@ -122,31 +122,32 @@ async function getCollectionMeta(contractAddress, apiKey) {
     }
   }
 
-  // Always try existing listing first — it already passed OS validation so fees are guaranteed correct
-  const listingFees = await getFeesFromExistingListing(contractAddress, apiKey);
-  if (listingFees.length > 0) {
-    console.log("[listing] using fees from existing listing:", JSON.stringify(listingFees));
-    fees = listingFees;
-  } else {
-    console.log("[listing] no existing listing found, using collection API fees:", JSON.stringify(fees));
-  }
+  // Always try existing listing first — guaranteed correct zone/orderType/fees
+  const listingParams = await getParamsFromExistingListing(contractAddress, apiKey);
 
-  return { slug, fees, name, floor };
+  return {
+    slug, name, floor,
+    fees:       listingParams?.fees.length > 0 ? listingParams.fees : fees,
+    zone:       listingParams?.zone       ?? ZONE,
+    zoneHash:   listingParams?.zoneHash   ?? ethers.ZeroHash,
+    orderType:  listingParams?.orderType  ?? 2,
+    conduitKey: listingParams?.conduitKey ?? CONDUIT_KEY,
+  };
 }
 
-// Derive fee structure from an actual validated listing on OpenSea.
-// This is the most reliable method — existing listings already passed OS validation.
-async function getFeesFromExistingListing(contractAddress, apiKey) {
+// Pull fees + order params (zone, orderType, conduitKey) from a real validated listing.
+// This is the most reliable method — copies what OpenSea already accepted.
+async function getParamsFromExistingListing(contractAddress, apiKey) {
   try {
     const data = await osGet(
       `/orders/ethereum/seaport/listings?asset_contract_address=${contractAddress}&limit=5&order_by=created_date&order_direction=desc`,
       apiKey
     );
     const order = data.orders?.[0];
-    if (!order) return [];
+    if (!order) return null;
 
-    const params   = order.protocol_data?.parameters;
-    if (!params)   return [];
+    const params = order.protocol_data?.parameters;
+    if (!params) return null;
 
     const offerer  = (params.offerer || "").toLowerCase();
     const allEth   = (params.consideration || []).filter(
@@ -155,18 +156,28 @@ async function getFeesFromExistingListing(contractAddress, apiKey) {
     const feeItems = allEth.filter(
       (c) => c.recipient?.toLowerCase() !== offerer
     );
-    if (feeItems.length === 0) return [];
 
     const totalWei = allEth.reduce((s, c) => s + BigInt(c.startAmount), 0n);
-    if (totalWei === 0n) return [];
 
-    return feeItems.map((c) => ({
-      feeBps:    Number((BigInt(c.startAmount) * 10000n) / totalWei),
-      recipient: c.recipient,
-    }));
+    const fees = feeItems.length > 0 && totalWei > 0n
+      ? feeItems.map((c) => ({
+          feeBps:    Number((BigInt(c.startAmount) * 10000n) / totalWei),
+          recipient: c.recipient,
+        }))
+      : [];
+
+    const result = {
+      fees,
+      zone:       params.zone       || ethers.ZeroAddress,
+      zoneHash:   params.zoneHash   || ethers.ZeroHash,
+      orderType:  params.orderType  ?? 0,
+      conduitKey: params.conduitKey || CONDUIT_KEY,
+    };
+    console.log("[listing] params from existing listing:", JSON.stringify(result));
+    return result;
   } catch (e) {
-    console.log("[listing] fee derivation from listing failed:", e.message);
-    return [];
+    console.log("[listing] existing listing fetch failed:", e.message);
+    return null;
   }
 }
 
@@ -195,8 +206,9 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
   const nftContract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
   const seaport     = new ethers.Contract(SEAPORT, SEAPORT_ABI, provider);
 
-  // Fetch real collection fees from OpenSea (handles 0% fee era correctly)
-  const { fees: collectionFees } = await getCollectionMeta(contractAddress, apiKey);
+  // Fetch fees + order params from existing listing (guaranteed correct)
+  const { fees: collectionFees, zone, zoneHash, orderType, conduitKey } = await getCollectionMeta(contractAddress, apiKey);
+  console.log("[listing] using zone:", zone, "orderType:", orderType, "conduitKey:", conduitKey);
 
   // Find eligible wallets
   const wallets  = getSubWallets();
@@ -269,7 +281,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
 
       const orderComponents = {
         offerer:  wallet.address,
-        zone:     ZONE,
+        zone:     zone,
         offer: [
           {
             itemType:             2, // ERC721
@@ -290,12 +302,12 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
           },
           ...feeItems,
         ],
-        orderType:  2, // FULL_RESTRICTED (required when using OpenSea zone)
+        orderType:  orderType,
         startTime:  startTime.toString(),
         endTime:    endTime.toString(),
-        zoneHash:   ethers.ZeroHash,
+        zoneHash:   zoneHash,
         salt,
-        conduitKey: CONDUIT_KEY,
+        conduitKey: conduitKey,
         counter:    counter.toString(),
       };
 
