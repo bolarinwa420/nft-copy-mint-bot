@@ -240,7 +240,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
           "Content-Type": "application/json",
           Accept:         "application/json",
         },
-        body: JSON.stringify({ parameters: orderComponents, signature }),
+        body: JSON.stringify({ parameters: orderComponents, signature, protocol_address: SEAPORT }),
       });
 
       if (postRes.ok) {
