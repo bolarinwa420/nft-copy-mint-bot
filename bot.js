@@ -1945,7 +1945,8 @@ bot.command("list", async (ctx) => {
       if (r.status === "listed") {
         msg += `✅ \`${shortAddr(r.address)}\` — Token #${r.tokenId} @ ${r.priceEth} ETH\n`;
       } else {
-        msg += `❌ \`${shortAddr(r.address ?? "unknown")}\` — ${(r.error ?? "unknown error").slice(0, 80)}\n`;
+        const safeErr = (r.error ?? "unknown error").replace(/[_*`[\]()~>#+=|{}.!-]/g, " ").slice(0, 80);
+        msg += `❌ \`${shortAddr(r.address ?? "unknown")}\` — ${safeErr}\n`;
       }
     }
 
