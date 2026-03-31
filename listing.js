@@ -112,7 +112,7 @@ async function getCollectionMeta(contractAddress, apiKey) {
       const raw = collData.fees || [];
       console.log("[listing] collection fees raw:", JSON.stringify(raw));
       fees = raw.filter((f) => f.fee > 0 && f.recipient).map((f) => ({
-        feeBps:    BigInt(f.fee),
+        feeBps:    f.fee,       // plain number — BigInt only at arithmetic time
         recipient: f.recipient,
       }));
       const fp = collData.floor_price ?? collData.stats?.floor_price;
@@ -158,7 +158,7 @@ async function getFeesFromExistingListing(contractAddress, apiKey) {
     if (totalWei === 0n) return [];
 
     return feeItems.map((c) => ({
-      feeBps:    (BigInt(c.startAmount) * 10000n) / totalWei,
+      feeBps:    Number((BigInt(c.startAmount) * 10000n) / totalWei),
       recipient: c.recipient,
     }));
   } catch (e) {
@@ -217,7 +217,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
 
   const feeItems = [];
   for (const fee of collectionFees) {
-    const feeWei = (priceWei * fee.feeBps) / 10000n;
+    const feeWei = (priceWei * BigInt(fee.feeBps)) / 10000n;
     sellerWei -= feeWei;
     feeItems.push({
       itemType:             0,
