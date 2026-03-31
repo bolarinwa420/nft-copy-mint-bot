@@ -90,7 +90,7 @@ async function getTokenIds(ownerAddress, contractAddress, ethersContract) {
 }
 
 // Fetch collection slug + fees from OpenSea.
-// Returns { slug, fees } where fees = [{ fee: bps, recipient: address }]
+// Returns { slug, fees, name, floor } where fees = [{ feeBps: bigint, recipient: string }]
 async function getCollectionMeta(contractAddress, apiKey) {
   let slug  = null;
   let fees  = [];
@@ -101,19 +101,70 @@ async function getCollectionMeta(contractAddress, apiKey) {
     const contractData = await osGet(`/chain/ethereum/contract/${contractAddress}`, apiKey);
     slug = contractData.collection;
     name = contractData.name || slug;
-  } catch {}
+  } catch (e) {
+    console.log("[listing] contract lookup failed:", e.message);
+  }
 
   if (slug) {
     try {
       const collData = await osGet(`/collections/${slug}`, apiKey);
-      name  = collData.name || name;
-      fees  = (collData.fees || []).filter((f) => f.fee > 0 && f.recipient);
+      name = collData.name || name;
+      const raw = collData.fees || [];
+      console.log("[listing] collection fees raw:", JSON.stringify(raw));
+      fees = raw.filter((f) => f.fee > 0 && f.recipient).map((f) => ({
+        feeBps:    BigInt(f.fee),
+        recipient: f.recipient,
+      }));
       const fp = collData.floor_price ?? collData.stats?.floor_price;
       if (fp != null) floor = fp;
-    } catch {}
+    } catch (e) {
+      console.log("[listing] collection meta failed:", e.message);
+    }
   }
 
+  // Fallback: derive real fee structure from an existing active listing
+  if (fees.length === 0) {
+    fees = await getFeesFromExistingListing(contractAddress, apiKey);
+  }
+
+  console.log("[listing] resolved fees:", JSON.stringify(fees));
   return { slug, fees, name, floor };
+}
+
+// Derive fee structure from an actual validated listing on OpenSea.
+// This is the most reliable method — existing listings already passed OS validation.
+async function getFeesFromExistingListing(contractAddress, apiKey) {
+  try {
+    const data = await osGet(
+      `/orders/ethereum/seaport/listings?asset_contract_address=${contractAddress}&limit=5&order_by=created_date&order_direction=desc`,
+      apiKey
+    );
+    const order = data.orders?.[0];
+    if (!order) return [];
+
+    const params   = order.protocol_data?.parameters;
+    if (!params)   return [];
+
+    const offerer  = (params.offerer || "").toLowerCase();
+    const allEth   = (params.consideration || []).filter(
+      (c) => (c.itemType === 0 || c.itemType === "0")
+    );
+    const feeItems = allEth.filter(
+      (c) => c.recipient?.toLowerCase() !== offerer
+    );
+    if (feeItems.length === 0) return [];
+
+    const totalWei = allEth.reduce((s, c) => s + BigInt(c.startAmount), 0n);
+    if (totalWei === 0n) return [];
+
+    return feeItems.map((c) => ({
+      feeBps:    (BigInt(c.startAmount) * 10000n) / totalWei,
+      recipient: c.recipient,
+    }));
+  } catch (e) {
+    console.log("[listing] fee derivation from listing failed:", e.message);
+    return [];
+  }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -166,7 +217,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
 
   const feeItems = [];
   for (const fee of collectionFees) {
-    const feeWei = (priceWei * BigInt(fee.fee)) / 10000n;
+    const feeWei = (priceWei * fee.feeBps) / 10000n;
     sellerWei -= feeWei;
     feeItems.push({
       itemType:             0,
@@ -177,6 +228,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
       recipient:            fee.recipient,
     });
   }
+  console.log("[listing] price:", priceWei.toString(), "sellerWei:", sellerWei.toString(), "feeItems:", JSON.stringify(feeItems));
 
   const startTime = Math.floor(Date.now() / 1000);
   const endTime   = startTime + LISTING_DAYS * 86400;
