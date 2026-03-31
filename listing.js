@@ -13,7 +13,7 @@ const LISTING_DAYS = 7;
 
 // Gas cap for setApprovalForAll — keeps approval cost ≤ ~$0.05 at normal gas
 // At 3 gwei * 50k gas = 0.00015 ETH ≈ $0.38 — already cheap; cap at 5 gwei to be safe
-const MAX_GAS_GWEI = 5n;
+const MAX_GAS_GWEI = 1n;
 
 const ERC721_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
