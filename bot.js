@@ -9,6 +9,7 @@ import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js"
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
 import { initSweepWatcher } from "./sweepWatcher.js";
+import { getContractInfo, massListNFTs } from "./listing.js";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -177,7 +178,9 @@ bot.command("start", async (ctx) => {
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
     `/setmaxmint <usd> — set max copy-mint price in USD\n` +
-    `/setalertchat — set this chat as alert chat`,
+    `/setalertchat — set this chat as alert chat\n` +
+    `/checkca <contract> — scan wallets for NFT + floor price\n` +
+    `/list <n> <contract> <price> — mass list NFTs on OpenSea`,
     { parse_mode: "Markdown" }
   );
 });
@@ -245,7 +248,11 @@ bot.command("commands", async (ctx) => {
     `/alerts — list all active alerts\n\n` +
 
     `*⚙️ Settings*\n` +
-    `/setalertchat — set this chat as the alert channel`,
+    `/setalertchat — set this chat as the alert channel\n\n` +
+
+    `*🏷️ OpenSea Listing*\n` +
+    `/checkca <contract> — scan wallets for NFT balance + floor price\n` +
+    `/list <n> <contract> <price> — mass list NFTs from N wallets at price (ETH)`,
     { parse_mode: "Markdown" }
   );
 });
@@ -1829,6 +1836,134 @@ bot.callbackQuery(/^history_(\d+)$/, async (ctx) => {
     lines.join("\n\n─────────────────\n\n"),
     { parse_mode: "Markdown", reply_markup: kb, disable_web_page_preview: true }
   );
+});
+
+// ─── OpenSea Mass Listing ─────────────────────────────────────────────────────
+
+// /checkca <contract> — scan which wallets hold the NFT + fetch floor price
+bot.command("checkca", async (ctx) => {
+  const ca = ctx.match?.trim();
+  if (!isValidAddress(ca)) {
+    return ctx.reply("Usage: /checkca <contract_address>");
+  }
+  if (!process.env.OPENSEA_API_KEY) {
+    return ctx.reply("❌ OPENSEA_API_KEY not set. Add it to Railway env vars.");
+  }
+
+  const scanning = await ctx.reply("🔍 Scanning wallets and fetching floor price...");
+
+  try {
+    const { collectionName, floorPrice, holdingWallets } = await getContractInfo(ca, provider, process.env.OPENSEA_API_KEY);
+
+    const name  = collectionName || "Unknown Collection";
+    const floor = floorPrice != null ? `${floorPrice} ETH` : "N/A";
+    const total = listWallets().length;
+
+    let walletLines = "";
+    if (holdingWallets.length === 0) {
+      walletLines = "_None of your wallets hold this NFT_";
+    } else {
+      walletLines = holdingWallets
+        .map((w) => `• \`${shortAddr(w.address)}\` — ${w.count} NFT${w.count > 1 ? "s" : ""}`)
+        .join("\n");
+    }
+
+    await ctx.api.editMessageText(
+      scanning.chat.id,
+      scanning.message_id,
+      `📦 *${name}*\n` +
+      `\`${ca}\`\n\n` +
+      `Floor Price: *${floor}*\n` +
+      `Wallets with NFT: *${holdingWallets.length}* / ${total}\n\n` +
+      `${walletLines}\n\n` +
+      (holdingWallets.length > 0
+        ? `To list: \`/list <num_wallets> ${ca} <price_eth>\`\nExample: \`/list ${Math.min(holdingWallets.length, 5)} ${ca} ${floorPrice ?? "0.05"}\``
+        : "_No wallets to list from._"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.api.editMessageText(
+      scanning.chat.id,
+      scanning.message_id,
+      `❌ Error: ${err.message}`
+    );
+  }
+});
+
+// /list <num_wallets> <contract> <price_eth> — mass list on OpenSea via Seaport
+bot.command("list", async (ctx) => {
+  const args = ctx.match?.trim().split(/\s+/);
+  if (!args || args.length < 3) {
+    return ctx.reply(
+      "Usage: `/list <num_wallets> <contract> <price_eth>`\n" +
+      "Example: `/list 5 0xabc...123 0.05`",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const [numStr, ca, priceStr] = args;
+  const numWallets = parseInt(numStr, 10);
+  const priceEth   = parseFloat(priceStr);
+
+  if (!Number.isInteger(numWallets) || numWallets < 1) {
+    return ctx.reply("❌ Invalid number of wallets.");
+  }
+  if (!isValidAddress(ca)) {
+    return ctx.reply("❌ Invalid contract address.");
+  }
+  if (isNaN(priceEth) || priceEth <= 0) {
+    return ctx.reply("❌ Invalid price. Use ETH (e.g. 0.05).");
+  }
+  if (!process.env.OPENSEA_API_KEY) {
+    return ctx.reply("❌ OPENSEA_API_KEY not set. Add it to Railway env vars.");
+  }
+
+  const working = await ctx.reply(
+    `⏳ Listing NFTs from up to *${numWallets}* wallet(s) at *${priceEth} ETH* each…\n_(approvals + signing may take a moment)_`,
+    { parse_mode: "Markdown" }
+  );
+
+  try {
+    const results = await massListNFTs(ca, numWallets, priceEth, provider, process.env.OPENSEA_API_KEY);
+
+    const listed = results.filter((r) => r.status === "listed");
+    const failed = results.filter((r) => r.status === "failed");
+    const errOnly = results.filter((r) => r.status === "error");
+
+    if (errOnly.length > 0) {
+      return ctx.api.editMessageText(
+        working.chat.id, working.message_id,
+        `❌ ${errOnly[0].error}`
+      );
+    }
+
+    let msg =
+      `📋 *OpenSea Listing Results*\n\n` +
+      `✅ Listed: *${listed.length}*   ❌ Failed: *${failed.length}*\n\n`;
+
+    for (const r of results) {
+      if (r.status === "listed") {
+        msg += `✅ \`${shortAddr(r.address)}\` — Token #${r.tokenId} @ ${r.priceEth} ETH\n`;
+      } else {
+        msg += `❌ \`${shortAddr(r.address ?? "unknown")}\` — ${(r.error ?? "unknown error").slice(0, 80)}\n`;
+      }
+    }
+
+    if (listed.length > 0) {
+      msg += `\n[View on OpenSea](https://opensea.io/assets/ethereum/${ca})`;
+    }
+
+    await ctx.api.editMessageText(
+      working.chat.id, working.message_id,
+      msg,
+      { parse_mode: "Markdown", disable_web_page_preview: true }
+    );
+  } catch (err) {
+    await ctx.api.editMessageText(
+      working.chat.id, working.message_id,
+      `❌ ${err.message}`
+    );
+  }
 });
 
 // ─── Text handler (schedule flow + fallback) ─────────────────────────────────
