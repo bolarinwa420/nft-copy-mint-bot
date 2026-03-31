@@ -139,8 +139,9 @@ async function getCollectionMeta(contractAddress, apiKey) {
 // This is the most reliable method — copies what OpenSea already accepted.
 async function getParamsFromExistingListing(contractAddress, apiKey) {
   try {
+    // Filter to Seaport 1.6 only so zone/conduitKey match what we're posting to
     const data = await osGet(
-      `/orders/ethereum/seaport/listings?asset_contract_address=${contractAddress}&limit=5&order_by=created_date&order_direction=desc`,
+      `/orders/ethereum/seaport/listings?asset_contract_address=${contractAddress}&limit=5&order_by=created_date&order_direction=desc&protocol_address=${SEAPORT}`,
       apiKey
     );
     const order = data.orders?.[0];
@@ -173,7 +174,8 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
       orderType:  params.orderType  ?? 0,
       conduitKey: params.conduitKey || CONDUIT_KEY,
     };
-    console.log("[listing] params from existing listing:", JSON.stringify(result));
+    console.log("[listing] raw params from OS listing — zone:", params.zone, "orderType:", params.orderType, "conduitKey:", params.conduitKey, "zoneHash:", params.zoneHash);
+    console.log("[listing] resolved params:", JSON.stringify(result));
     return result;
   } catch (e) {
     console.log("[listing] existing listing fetch failed:", e.message);
