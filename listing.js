@@ -290,7 +290,7 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
           },
           ...feeItems,
         ],
-        orderType:  0, // FULL_OPEN
+        orderType:  2, // FULL_RESTRICTED (required when using OpenSea zone)
         startTime:  startTime.toString(),
         endTime:    endTime.toString(),
         zoneHash:   ethers.ZeroHash,
