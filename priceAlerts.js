@@ -42,14 +42,18 @@ export function initPriceAlerts(notify) {
         continue;
       }
 
-      if (floor >= alert.targetPrice) {
+      const triggered = alert.direction === "below"
+        ? floor <= alert.targetPrice
+        : floor >= alert.targetPrice;
+      if (triggered) {
         const now = Date.now();
         const cooldownPassed = !alert.lastFiredAt || now - alert.lastFiredAt >= COOLDOWN;
         if (cooldownPassed) {
+          const dirWord = alert.direction === "below" ? "dropped to" : "reached";
           await notify(
             `🚨 Price Alert Triggered!\n` +
             `Collection: ${alert.name || alert.contract}\n` +
-            `Floor is now ${floor.toFixed(4)} ETH (target: ${alert.targetPrice} ETH)`,
+            `Floor has ${dirWord} ${floor.toFixed(4)} ETH (target: ${alert.targetPrice} ETH)`,
             null,
             null
           );

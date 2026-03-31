@@ -356,15 +356,23 @@ bot.command("setalert", async (ctx) => {
   if (existing) {
     return ctx.reply(`Alert already set for *${existing.name}* at ${existing.targetPrice} ETH. Use /removealert first to change it.`, { parse_mode: "Markdown" });
   }
+
+  // Fetch current floor to determine alert direction
+  const currentFloor = await getAlertFloorPrice(contract.toLowerCase());
+  const direction = (currentFloor !== null && targetPrice < currentFloor) ? "below" : "above";
+  const directionLabel = direction === "below" ? "drops to or below" : "rises to or above";
+
   await addPriceAlert({
     id: uuidv4Alert(),
     contract: contract.toLowerCase(),
     name,
     targetPrice,
+    direction,
     lastFiredAt: null,
     createdAt: Date.now(),
   });
-  await ctx.reply(`✅ Alert set!\nI'll ping you when *${name}* floor hits *${targetPrice} ETH* or above.`, { parse_mode: "Markdown" });
+  const floorNote = currentFloor !== null ? ` (current floor: ${currentFloor.toFixed(4)} ETH)` : "";
+  await ctx.reply(`✅ Alert set!\nI'll ping you when *${name}* floor ${directionLabel} *${targetPrice} ETH*${floorNote}.`, { parse_mode: "Markdown" });
 });
 
 bot.command("removealert", async (ctx) => {
