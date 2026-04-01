@@ -1896,20 +1896,30 @@ bot.command("checkca", async (ctx) => {
   }
 });
 
-// /list <range|group> <contract> <price_eth> — mass list on OpenSea via Seaport
-// Examples: /list 1-5 0xabc...123 0.05   OR   /list karlkestis 0xabc...123 0.05
+// /list <range|group> <contract> <price_eth>       — range OR group
+// /list <range> <group> <contract> <price_eth>     — range within a group
 bot.command("list", async (ctx) => {
   const args = ctx.match?.trim().split(/\s+/);
   if (!args || args.length < 3) {
     return ctx.reply(
-      "Usage: `/list <range|group> <contract> <price_eth>`\n" +
-      "Examples:\n`/list 1-5 0xabc...123 0.05`\n`/list karlkestis 0xabc...123 0.05`",
+      "Usage:\n" +
+      "`/list 1-5 0xabc...123 0.05` — wallets 1–5\n" +
+      "`/list karlkestis 0xabc...123 0.05` — whole group\n" +
+      "`/list 5-10 karlkestis 0xabc...123 0.05` — range within group",
       { parse_mode: "Markdown" }
     );
   }
 
-  const [selector, ca, priceStr] = args;
-  const priceEth = parseFloat(priceStr.replace(/[^\d.]/g, ""));
+  // Detect 4-arg form: <range> <group> <contract> <price>
+  let rangeArg, groupArg, ca, priceStr;
+  const rangeMatch4 = args[0].match(/^(\d+)-(\d+)$/);
+  if (args.length >= 4 && rangeMatch4 && !isValidAddress(args[1])) {
+    [rangeArg, groupArg, ca, priceStr] = args;
+  } else {
+    [rangeArg, ca, priceStr] = args; // 3-arg form — rangeArg is range or group
+  }
+
+  const priceEth = parseFloat((priceStr ?? "").replace(/[^\d.]/g, ""));
 
   if (!isValidAddress(ca)) {
     return ctx.reply("❌ Invalid contract address.");
@@ -1921,27 +1931,43 @@ bot.command("list", async (ctx) => {
     return ctx.reply("❌ OPENSEA_API_KEY not set. Add it to Railway env vars.");
   }
 
-  // Resolve wallet pool from range (1-5) or group name (karlkestis)
   const allWallets = getSubWallets();
   let walletPool;
   let selectorLabel;
 
-  const rangeMatch = selector.match(/^(\d+)-(\d+)$/);
-  if (rangeMatch) {
-    const from = parseInt(rangeMatch[1], 10);
-    const to   = parseInt(rangeMatch[2], 10);
-    if (from < 1 || to < from || to > allWallets.length) {
-      return ctx.reply(`❌ Range ${selector} is out of bounds (you have ${allWallets.length} wallets).`);
-    }
-    walletPool   = allWallets.slice(from - 1, to); // 1-based → 0-based
-    selectorLabel = `wallets ${from}–${to}`;
-  } else {
-    const groupWallets = getGroupWallets(selector);
+  if (groupArg) {
+    // 4-arg: range within a specific group
+    const groupWallets = getGroupWallets(groupArg);
     if (!groupWallets || groupWallets.length === 0) {
-      return ctx.reply(`❌ No group named "${selector}". Use a range like \`1-5\` or a group name.`);
+      return ctx.reply(`❌ No group named "${groupArg}".`);
     }
-    walletPool   = groupWallets;
-    selectorLabel = `group "${selector}"`;
+    const from = parseInt(rangeMatch4[1], 10);
+    const to   = parseInt(rangeMatch4[2], 10);
+    if (from < 1 || to < from || to > groupWallets.length) {
+      return ctx.reply(`❌ Range ${rangeArg} is out of bounds for group "${groupArg}" (${groupWallets.length} wallets).`);
+    }
+    walletPool    = groupWallets.slice(from - 1, to);
+    selectorLabel = `${groupArg} wallets ${from}–${to}`;
+  } else {
+    const rm = rangeArg.match(/^(\d+)-(\d+)$/);
+    if (rm) {
+      // 3-arg range form
+      const from = parseInt(rm[1], 10);
+      const to   = parseInt(rm[2], 10);
+      if (from < 1 || to < from || to > allWallets.length) {
+        return ctx.reply(`❌ Range ${rangeArg} is out of bounds (you have ${allWallets.length} wallets).`);
+      }
+      walletPool    = allWallets.slice(from - 1, to);
+      selectorLabel = `wallets ${from}–${to}`;
+    } else {
+      // 3-arg group form
+      const groupWallets = getGroupWallets(rangeArg);
+      if (!groupWallets || groupWallets.length === 0) {
+        return ctx.reply(`❌ No group named "${rangeArg}". Use a range like \`1-5\` or a group name.`);
+      }
+      walletPool    = groupWallets;
+      selectorLabel = `group "${rangeArg}"`;
+    }
   }
 
   const working = await ctx.reply(
