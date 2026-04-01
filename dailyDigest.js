@@ -67,7 +67,7 @@ async function runDailyDigest(notifyFn) {
 
   for (const contract of contracts) {
     const stats = await getCollectionStats(contract);
-    const name = stats?.name || `${contract.slice(0, 6)}...${contract.slice(-4)}`;
+    const name = stats?.name || contract;
     const floor =
       stats?.floor != null ? `${Number(stats.floor).toFixed(4)} ETH` : "—";
     const volume =
