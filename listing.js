@@ -129,9 +129,9 @@ async function getCollectionMeta(contractAddress, apiKey) {
     slug, name, floor,
     // Only use listing fees if they came from THIS collection — global fallback fees belong to a different collection
     fees:       (!listingParams?.isGlobal && listingParams?.fees.length > 0) ? listingParams.fees : fees,
-    zone:       listingParams?.zone       ?? ZONE,
+    zone:       listingParams?.zone       ?? ethers.ZeroAddress,
     zoneHash:   listingParams?.zoneHash   ?? ethers.ZeroHash,
-    orderType:  listingParams?.orderType  ?? 2,  // FULL_RESTRICTED — required when using a conduit
+    orderType:  listingParams?.orderType  ?? 2,
     conduitKey: listingParams?.conduitKey ?? CONDUIT_KEY,
   };
 }
@@ -155,10 +155,14 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
       console.log("[listing] no collection-specific Seaport 1.6 listing — querying global fallback");
       try {
         const global = await osGet(
-          `/orders/ethereum/seaport/listings?limit=1&order_by=created_date&order_direction=desc&protocol_address=${SEAPORT}`,
+          `/orders/ethereum/seaport/listings?limit=20&order_by=created_date&order_direction=desc&protocol_address=${SEAPORT}`,
           apiKey
         );
-        order = global.orders?.[0];
+        // Prefer a listing that uses our conduitKey — guarantees a compatible zone/orderType
+        const withConduit = global.orders?.find(
+          (o) => o.protocol_data?.parameters?.conduitKey?.toLowerCase() === CONDUIT_KEY.toLowerCase()
+        );
+        order = withConduit || global.orders?.[0];
         if (order) isGlobal = true;
       } catch (e2) {
         console.log("[listing] global fallback fetch failed:", e2.message);
@@ -228,15 +232,9 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
   const nftContract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
   const seaport     = new ethers.Contract(SEAPORT, SEAPORT_ABI, provider);
 
-  // Fetch fees from collection metadata
-  const { fees: collectionFees } = await getCollectionMeta(contractAddress, apiKey);
-
-  // Fixed Seaport 1.6 params: FULL_OPEN, no conduit, no zone — simplest valid structure OS accepts
-  const zone       = ethers.ZeroAddress;
-  const zoneHash   = ethers.ZeroHash;
-  const orderType  = 0; // FULL_OPEN
-  const conduitKey = ethers.ZeroHash; // no conduit
-  console.log("[listing] using FULL_OPEN, no conduit, no zone — fees:", JSON.stringify(collectionFees));
+  // Fetch fees + order params (zone, orderType, conduitKey)
+  const { fees: collectionFees, zone, zoneHash, orderType, conduitKey } = await getCollectionMeta(contractAddress, apiKey);
+  console.log("[listing] using zone:", zone, "orderType:", orderType, "conduitKey:", conduitKey);
 
   // Find eligible wallets
   const wallets  = getSubWallets();
@@ -294,10 +292,10 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
     try {
       const signer = getWalletSigner(wallet.address, provider);
 
-      // Approve Seaport directly (no conduit) — one-time, gas-capped
-      const isApproved = await nftContract.isApprovedForAll(wallet.address, SEAPORT);
+      // Approve Seaport conduit — one-time, gas-capped
+      const isApproved = await nftContract.isApprovedForAll(wallet.address, CONDUIT);
       if (!isApproved) {
-        const approveTx = await nftContract.connect(signer).setApprovalForAll(SEAPORT, true, {
+        const approveTx = await nftContract.connect(signer).setApprovalForAll(CONDUIT, true, {
           maxFeePerGas:         gasPrice,
           maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei"),
         });
