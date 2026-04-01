@@ -228,7 +228,8 @@ export async function getContractInfo(contractAddress, provider, apiKey) {
   return { collectionName: name, floorPrice: floor, holdingWallets, slug };
 }
 
-export async function massListNFTs(contractAddress, numWallets, priceEth, provider, apiKey) {
+// walletPool: array of wallet objects { address, encryptedPk } to source from
+export async function massListNFTs(contractAddress, walletPool, priceEth, provider, apiKey) {
   const nftContract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
   const seaport     = new ethers.Contract(SEAPORT, SEAPORT_ABI, provider);
 
@@ -236,12 +237,10 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
   const { fees: collectionFees, zone, zoneHash, orderType, conduitKey } = await getCollectionMeta(contractAddress, apiKey);
   console.log("[listing] using zone:", zone, "orderType:", orderType, "conduitKey:", conduitKey);
 
-  // Find eligible wallets
-  const wallets  = getSubWallets();
+  // Find eligible wallets from the provided pool
   const eligible = [];
 
-  for (const w of wallets) {
-    if (eligible.length >= numWallets) break;
+  for (const w of walletPool) {
     try {
       const tokenIds = await getTokenIds(w.address, contractAddress, nftContract);
       if (tokenIds.length > 0) eligible.push({ wallet: w, tokenId: tokenIds[0] });

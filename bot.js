@@ -186,7 +186,7 @@ bot.command("start", async (ctx) => {
     `/setmaxmint <usd> — set max copy-mint price in USD\n` +
     `/setalertchat — set this chat as alert chat\n` +
     `/checkca <contract> — scan wallets for NFT + floor price\n` +
-    `/list <n> <contract> <price> — mass list NFTs on OpenSea`,
+    `/list <range|group> <contract> <price> — mass list NFTs on OpenSea`,
     { parse_mode: "Markdown" }
   );
 });
@@ -258,7 +258,7 @@ bot.command("commands", async (ctx) => {
 
     `*🏷️ OpenSea Listing*\n` +
     `/checkca <contract> — scan wallets for NFT balance + floor price\n` +
-    `/list <n> <contract> <price> — mass list NFTs from N wallets at price (ETH)`,
+    `/list <range|group> <contract> <price> — mass list NFTs at price (ETH)`,
     { parse_mode: "Markdown" }
   );
 });
@@ -1883,7 +1883,7 @@ bot.command("checkca", async (ctx) => {
       `Wallets with NFT: *${holdingWallets.length}* / ${total}\n\n` +
       `${walletLines}\n\n` +
       (holdingWallets.length > 0
-        ? `To list: \`/list <num_wallets> ${ca} <price_eth>\`\nExample: \`/list ${Math.min(holdingWallets.length, 5)} ${ca} ${floorPrice ?? "0.05"}\``
+        ? `To list: \`/list <range|group> ${ca} <price_eth>\`\nExample: \`/list 1-${Math.min(holdingWallets.length, 5)} ${ca} ${floorPrice ?? "0.05"}\``
         : "_No wallets to list from._"),
       { parse_mode: "Markdown" }
     );
@@ -1896,24 +1896,21 @@ bot.command("checkca", async (ctx) => {
   }
 });
 
-// /list <num_wallets> <contract> <price_eth> — mass list on OpenSea via Seaport
+// /list <range|group> <contract> <price_eth> — mass list on OpenSea via Seaport
+// Examples: /list 1-5 0xabc...123 0.05   OR   /list karlkestis 0xabc...123 0.05
 bot.command("list", async (ctx) => {
   const args = ctx.match?.trim().split(/\s+/);
   if (!args || args.length < 3) {
     return ctx.reply(
-      "Usage: `/list <num_wallets> <contract> <price_eth>`\n" +
-      "Example: `/list 5 0xabc...123 0.05`",
+      "Usage: `/list <range|group> <contract> <price_eth>`\n" +
+      "Examples:\n`/list 1-5 0xabc...123 0.05`\n`/list karlkestis 0xabc...123 0.05`",
       { parse_mode: "Markdown" }
     );
   }
 
-  const [numStr, ca, priceStr] = args;
-  const numWallets = parseInt(numStr, 10);
-  const priceEth   = parseFloat(priceStr);
+  const [selector, ca, priceStr] = args;
+  const priceEth = parseFloat(priceStr.replace(/[^\d.]/g, ""));
 
-  if (!Number.isInteger(numWallets) || numWallets < 1) {
-    return ctx.reply("❌ Invalid number of wallets.");
-  }
   if (!isValidAddress(ca)) {
     return ctx.reply("❌ Invalid contract address.");
   }
@@ -1924,13 +1921,36 @@ bot.command("list", async (ctx) => {
     return ctx.reply("❌ OPENSEA_API_KEY not set. Add it to Railway env vars.");
   }
 
+  // Resolve wallet pool from range (1-5) or group name (karlkestis)
+  const allWallets = getSubWallets();
+  let walletPool;
+  let selectorLabel;
+
+  const rangeMatch = selector.match(/^(\d+)-(\d+)$/);
+  if (rangeMatch) {
+    const from = parseInt(rangeMatch[1], 10);
+    const to   = parseInt(rangeMatch[2], 10);
+    if (from < 1 || to < from || to > allWallets.length) {
+      return ctx.reply(`❌ Range ${selector} is out of bounds (you have ${allWallets.length} wallets).`);
+    }
+    walletPool   = allWallets.slice(from - 1, to); // 1-based → 0-based
+    selectorLabel = `wallets ${from}–${to}`;
+  } else {
+    const groupWallets = getGroupWallets(selector);
+    if (!groupWallets || groupWallets.length === 0) {
+      return ctx.reply(`❌ No group named "${selector}". Use a range like \`1-5\` or a group name.`);
+    }
+    walletPool   = groupWallets;
+    selectorLabel = `group "${selector}"`;
+  }
+
   const working = await ctx.reply(
-    `⏳ Listing NFTs from up to *${numWallets}* wallet(s) at *${priceEth} ETH* each…\n_(approvals + signing may take a moment)_`,
+    `⏳ Listing NFTs from *${selectorLabel}* (${walletPool.length} wallet(s)) at *${priceEth} ETH* each…\n_(approvals + signing may take a moment)_`,
     { parse_mode: "Markdown" }
   );
 
   try {
-    const results = await massListNFTs(ca, numWallets, priceEth, provider, process.env.OPENSEA_API_KEY);
+    const results = await massListNFTs(ca, walletPool, priceEth, provider, process.env.OPENSEA_API_KEY);
 
     const listed = results.filter((r) => r.status === "listed");
     const failed = results.filter((r) => r.status === "failed");
