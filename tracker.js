@@ -119,6 +119,7 @@ async function restartAllSubscriptions() {
 
   startTMATracking();
   await startTracking();
+  tmaEvents.emit("wsRestarted");
   console.log("[Tracker] Subscriptions restarted");
 }
 
