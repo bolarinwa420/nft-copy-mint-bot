@@ -9,6 +9,7 @@ import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js"
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
 import { initSweepWatcher } from "./sweepWatcher.js";
+import { initDailyDigest } from "./dailyDigest.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -79,6 +80,7 @@ initScheduler(notify);
 initWatcher(provider, notify);
 initPriceAlerts(notify);
 initSweepWatcher(notify);
+initDailyDigest(notify);
 startWatcher();
 await startTracking();
 
