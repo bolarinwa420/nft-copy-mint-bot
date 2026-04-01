@@ -3,7 +3,7 @@ import { getMintLog } from "./storage.js";
 const RESERVOIR_BASE = "https://api.reservoir.tools";
 const POLL_INTERVAL = 10 * 60 * 1000;   // check every 10 minutes
 const COOLDOWN = 2 * 60 * 60 * 1000;    // re-alert max once per 2 hours per contract
-const SALES_THRESHOLD = 50;
+const SALES_THRESHOLD = 10;
 
 // In-memory cooldown tracker — resets on redeploy, which is fine
 const lastFired = new Map(); // contract -> timestamp
@@ -72,7 +72,7 @@ async function poll(notifyFn) {
 
       await notifyFn(
         `🔥 *Sales Spike Alert!*\n\n` +
-          `*${stats.name}* just crossed ${SALES_THRESHOLD} sales today!\n\n` +
+          `*${stats.name}* just hit ${stats.salesCount} sales today!\n\n` +
           `\`${contract}\`\n\n` +
           `24h Sales: *${stats.salesCount}*\n` +
           `Floor: ${floor}\n` +
