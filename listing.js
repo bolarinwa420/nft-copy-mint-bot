@@ -144,8 +144,23 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
       `/orders/ethereum/seaport/listings?asset_contract_address=${contractAddress}&limit=5&order_by=created_date&order_direction=desc&protocol_address=${SEAPORT}`,
       apiKey
     );
-    const order = data.orders?.[0];
-    if (!order) return null;
+    let order = data.orders?.[0];
+
+    // No listings for this collection on Seaport 1.6 — fall back to any recent listing
+    // to discover the canonical zone/orderType/conduitKey OpenSea expects
+    if (!order) {
+      console.log("[listing] no collection-specific Seaport 1.6 listing — querying global fallback");
+      try {
+        const global = await osGet(
+          `/orders/ethereum/seaport/listings?limit=1&order_by=created_date&order_direction=desc&protocol_address=${SEAPORT}`,
+          apiKey
+        );
+        order = global.orders?.[0];
+      } catch (e2) {
+        console.log("[listing] global fallback fetch failed:", e2.message);
+      }
+      if (!order) return null;
+    }
 
     const params = order.protocol_data?.parameters;
     if (!params) return null;
