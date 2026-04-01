@@ -8,7 +8,7 @@ const OPENSEA_API  = "https://api.opensea.io/api/v2";
 const SEAPORT      = "0x0000000000000068F116a894984e2DB1123eB395"; // Seaport 1.6
 const CONDUIT      = "0x1E0049783F008A0085193E00003D00cd54003c71"; // OpenSea conduit
 const CONDUIT_KEY  = "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000";
-const ZONE         = "0x004C00500000aD104D7DBd00e3ae0A5C00560C00"; // OpenSea zone
+// ZONE constant removed — fallback uses ZeroAddress + FULL_OPEN (orderType 0)
 const LISTING_DAYS = 7;
 
 // Gas cap for setApprovalForAll — keeps approval cost ≤ ~$0.05 at normal gas
@@ -128,9 +128,9 @@ async function getCollectionMeta(contractAddress, apiKey) {
   return {
     slug, name, floor,
     fees:       listingParams?.fees.length > 0 ? listingParams.fees : fees,
-    zone:       listingParams?.zone       ?? ZONE,
+    zone:       listingParams?.zone       ?? ethers.ZeroAddress,
     zoneHash:   listingParams?.zoneHash   ?? ethers.ZeroHash,
-    orderType:  listingParams?.orderType  ?? 2,
+    orderType:  listingParams?.orderType  ?? 0,  // FULL_OPEN — no zone needed, conduit still works
     conduitKey: listingParams?.conduitKey ?? CONDUIT_KEY,
   };
 }
