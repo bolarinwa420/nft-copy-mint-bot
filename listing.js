@@ -228,9 +228,15 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
   const nftContract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
   const seaport     = new ethers.Contract(SEAPORT, SEAPORT_ABI, provider);
 
-  // Fetch fees + order params from existing listing (guaranteed correct)
-  const { fees: collectionFees, zone, zoneHash, orderType, conduitKey } = await getCollectionMeta(contractAddress, apiKey);
-  console.log("[listing] using zone:", zone, "orderType:", orderType, "conduitKey:", conduitKey);
+  // Fetch fees from collection metadata
+  const { fees: collectionFees } = await getCollectionMeta(contractAddress, apiKey);
+
+  // Fixed Seaport 1.6 params: FULL_OPEN, no conduit, no zone — simplest valid structure OS accepts
+  const zone       = ethers.ZeroAddress;
+  const zoneHash   = ethers.ZeroHash;
+  const orderType  = 0; // FULL_OPEN
+  const conduitKey = ethers.ZeroHash; // no conduit
+  console.log("[listing] using FULL_OPEN, no conduit, no zone — fees:", JSON.stringify(collectionFees));
 
   // Find eligible wallets
   const wallets  = getSubWallets();
@@ -288,10 +294,10 @@ export async function massListNFTs(contractAddress, numWallets, priceEth, provid
     try {
       const signer = getWalletSigner(wallet.address, provider);
 
-      // Approve Seaport conduit — one-time, gas-capped
-      const isApproved = await nftContract.isApprovedForAll(wallet.address, CONDUIT);
+      // Approve Seaport directly (no conduit) — one-time, gas-capped
+      const isApproved = await nftContract.isApprovedForAll(wallet.address, SEAPORT);
       if (!isApproved) {
-        const approveTx = await nftContract.connect(signer).setApprovalForAll(CONDUIT, true, {
+        const approveTx = await nftContract.connect(signer).setApprovalForAll(SEAPORT, true, {
           maxFeePerGas:         gasPrice,
           maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei"),
         });
