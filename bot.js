@@ -10,6 +10,7 @@ import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
 import { initSweepWatcher } from "./sweepWatcher.js";
 import { initDailyDigest } from "./dailyDigest.js";
+import { initSalesWatcher } from "./salesWatcher.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -81,6 +82,7 @@ initWatcher(provider, notify);
 initPriceAlerts(notify);
 initSweepWatcher(notify);
 initDailyDigest(notify);
+initSalesWatcher(notify);
 startWatcher();
 await startTracking();
 
