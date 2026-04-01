@@ -127,7 +127,8 @@ async function getCollectionMeta(contractAddress, apiKey) {
 
   return {
     slug, name, floor,
-    fees:       listingParams?.fees.length > 0 ? listingParams.fees : fees,
+    // Only use listing fees if they came from THIS collection — global fallback fees belong to a different collection
+    fees:       (!listingParams?.isGlobal && listingParams?.fees.length > 0) ? listingParams.fees : fees,
     zone:       listingParams?.zone       ?? ZONE,
     zoneHash:   listingParams?.zoneHash   ?? ethers.ZeroHash,
     orderType:  listingParams?.orderType  ?? 2,  // FULL_RESTRICTED — required when using a conduit
@@ -145,9 +146,11 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
       apiKey
     );
     let order = data.orders?.[0];
+    let isGlobal = false;
 
     // No listings for this collection on Seaport 1.6 — fall back to any recent listing
-    // to discover the canonical zone/orderType/conduitKey OpenSea expects
+    // to discover the canonical zone/orderType/conduitKey OpenSea expects.
+    // Mark as global so caller knows NOT to use these fees (wrong collection's royalties).
     if (!order) {
       console.log("[listing] no collection-specific Seaport 1.6 listing — querying global fallback");
       try {
@@ -156,6 +159,7 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
           apiKey
         );
         order = global.orders?.[0];
+        if (order) isGlobal = true;
       } catch (e2) {
         console.log("[listing] global fallback fetch failed:", e2.message);
       }
@@ -184,6 +188,7 @@ async function getParamsFromExistingListing(contractAddress, apiKey) {
 
     const result = {
       fees,
+      isGlobal,
       zone:       params.zone       || ethers.ZeroAddress,
       zoneHash:   params.zoneHash   || ethers.ZeroHash,
       orderType:  params.orderType  ?? 0,
