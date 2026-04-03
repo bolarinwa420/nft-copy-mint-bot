@@ -19,6 +19,7 @@ const defaultData = {
   priceAlerts: [],   // floor price alerts: [{ id, contract, targetPrice, lastFiredAt, createdAt }]
   sweepWatchers: [], // sweep watchers: [{ id, wallet, name, threshold, lastBlock, createdAt }]
   seadropAlertCounts: {}, // { [contractAddress]: alertCount } — persisted across deploys
+  newCollectionAlertCounts: {}, // { [contractAddress]: alertCount } — persisted across deploys
 };
 
 let db;
@@ -275,5 +276,17 @@ export async function incrementSeadropAlertCount(contract) {
   if (!db.data.seadropAlertCounts) db.data.seadropAlertCounts = {};
   const ca = contract.toLowerCase();
   db.data.seadropAlertCounts[ca] = (db.data.seadropAlertCounts[ca] || 0) + 1;
+  await db.write();
+}
+
+export function getNewCollectionAlertCount(contract) {
+  if (!db.data.newCollectionAlertCounts) return 0;
+  return db.data.newCollectionAlertCounts[contract.toLowerCase()] || 0;
+}
+
+export async function incrementNewCollectionAlertCount(contract) {
+  if (!db.data.newCollectionAlertCounts) db.data.newCollectionAlertCounts = {};
+  const ca = contract.toLowerCase();
+  db.data.newCollectionAlertCounts[ca] = (db.data.newCollectionAlertCounts[ca] || 0) + 1;
   await db.write();
 }

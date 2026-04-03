@@ -1,14 +1,13 @@
 // Watches for brand-new collections (created in last MAX_AGE_HOURS) that hit
 // SALES_THRESHOLD sales on Reservoir. Polls every POLL_INTERVAL ms.
 
+import { getNewCollectionAlertCount, incrementNewCollectionAlertCount } from "./storage.js";
+
 const RESERVOIR_BASE   = "https://api.reservoir.tools";
 const POLL_INTERVAL    = 3 * 60 * 1000;  // every 3 minutes
-const COOLDOWN         = 60 * 60 * 1000; // re-alert max once per hour per contract
 const SALES_THRESHOLD  = 50;             // sales in the last 24h to trigger
 const MAX_AGE_HOURS    = 48;             // only care about collections launched in last 48h
-
-// In-memory — fine, Railway restarts are rare and worst case is a duplicate alert
-const lastFired = new Map(); // contract -> timestamp
+const MAX_ALERTS       = 2;             // max alerts per collection, ever
 
 async function fetchNewCollections() {
   // sortBy=createdAt gives us the freshest collections first
@@ -46,10 +45,8 @@ async function poll(notifyFn) {
 
     if (!contract || sales24h < SALES_THRESHOLD) continue;
 
-    const lastFiredAt = lastFired.get(contract) || 0;
-    if (now - lastFiredAt < COOLDOWN) continue;
-
-    lastFired.set(contract, now);
+    if (getNewCollectionAlertCount(contract) >= MAX_ALERTS) continue;
+    await incrementNewCollectionAlertCount(contract);
 
     const ageHours   = ((now - createdAt) / (60 * 60 * 1000)).toFixed(1);
     const floorStr   = floor   != null ? `${Number(floor).toFixed(4)} ETH`   : "—";
