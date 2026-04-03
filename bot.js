@@ -12,6 +12,7 @@ import { initSweepWatcher } from "./sweepWatcher.js";
 import { initDailyDigest } from "./dailyDigest.js";
 import { initSalesWatcher } from "./salesWatcher.js";
 import { initSeadropDetector } from "./seadropDetector.js";
+import { initNewCollectionWatcher } from "./newCollectionWatcher.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -85,6 +86,7 @@ initSweepWatcher(notify);
 initDailyDigest(notify);
 initSalesWatcher(notify);
 initSeadropDetector(notify);
+initNewCollectionWatcher(notify);
 startWatcher();
 await startTracking();
 
