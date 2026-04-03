@@ -18,6 +18,7 @@ const defaultData = {
   watches: [],       // drop watchers: [{ id, nftContract, group, calldata, active, createdAt }]
   priceAlerts: [],   // floor price alerts: [{ id, contract, targetPrice, lastFiredAt, createdAt }]
   sweepWatchers: [], // sweep watchers: [{ id, wallet, name, threshold, lastBlock, createdAt }]
+  seadropAlertCounts: {}, // { [contractAddress]: alertCount } — persisted across deploys
 };
 
 let db;
@@ -261,4 +262,18 @@ export async function updateSweepWatcher(id, patch) {
     Object.assign(watcher, patch);
     await db.write();
   }
+}
+
+// --- SeaDrop Alert Counts ---
+
+export function getSeadropAlertCount(contract) {
+  if (!db.data.seadropAlertCounts) return 0;
+  return db.data.seadropAlertCounts[contract.toLowerCase()] || 0;
+}
+
+export async function incrementSeadropAlertCount(contract) {
+  if (!db.data.seadropAlertCounts) db.data.seadropAlertCounts = {};
+  const ca = contract.toLowerCase();
+  db.data.seadropAlertCounts[ca] = (db.data.seadropAlertCounts[ca] || 0) + 1;
+  await db.write();
 }

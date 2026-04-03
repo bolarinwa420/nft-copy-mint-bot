@@ -1,14 +1,12 @@
 import { ethers } from "ethers";
 import { getAlchemy, tmaEvents } from "./tracker.js";
+import { getSeadropAlertCount, incrementSeadropAlertCount } from "./storage.js";
 
 const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
 const SEADROP_MINT_TOPIC = ethers.id(
   "SeaDropMint(address,address,address,address,uint256,uint256,uint256,uint256)"
 );
-const COOLDOWN = 60 * 60 * 1000; // alert once per hour per contract
-
-// In-memory: contract -> timestamp last alerted
-const lastAlerted = new Map();
+const MAX_ALERTS_PER_CONTRACT = 2;
 
 let storedNotifyFn;
 
@@ -37,9 +35,9 @@ function startSeadropDetection() {
         const nftContract = ethers.getAddress("0x" + log.topics[1].slice(26));
         const ca = nftContract.toLowerCase();
 
-        const now = Date.now();
-        if (now - (lastAlerted.get(ca) || 0) < COOLDOWN) return;
-        lastAlerted.set(ca, now);
+        const alertCount = getSeadropAlertCount(ca);
+        if (alertCount >= MAX_ALERTS_PER_CONTRACT) return;
+        await incrementSeadropAlertCount(ca);
 
         // data = abi.encode(address payer, uint256 quantityMinted, uint256 unitMintPrice, uint256 feeBps, uint256 dropStageIndex)
         const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
