@@ -3,6 +3,7 @@ import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 import { getSettings, logMint } from "./storage.js";
 import { mintEvents, tmaEvents } from "./tracker.js";
 import { getAllSigners, getGroupSigners } from "./wallets.js";
+import { getWhaleLabel } from "./whale-meta.js";
 
 const SEADROP_ADDRESS = "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
 const SEADROP_MINT_PUBLIC_SELECTOR = "0x161ac21f";
@@ -215,8 +216,10 @@ async function handleMintDetected({ whale, contract, tx }) {
   const ethPrice = await getEthUsdPrice();
   const usdCost = ethAmount * ethPrice;
 
+  const whaleLabel = getWhaleLabel(whale);
   const alertMsg =
     `🐋 *Whale Mint Detected!*\n\n` +
+    (whaleLabel ? `${whaleLabel}\n` : ``) +
     `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
     `Contract: \`${contract}\`\n` +
     `Whale paid: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +

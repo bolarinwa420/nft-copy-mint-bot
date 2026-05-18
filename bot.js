@@ -14,6 +14,7 @@ import { initSalesWatcher } from "./salesWatcher.js";
 import { initSeadropDetector } from "./seadropDetector.js";
 import { initNewCollectionWatcher } from "./newCollectionWatcher.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
+import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -75,6 +76,17 @@ async function askApproval({ mintId, usdCost, ethAmount, maxUsd, contract, whale
     { parse_mode: "Markdown", reply_markup: kb }
   );
 }
+
+// Seed whale wallets on startup — adds any missing ones without touching existing
+const tracked = getTracked();
+let seeded = 0;
+for (const addr of WHALE_SEED) {
+  if (!tracked.includes(addr.toLowerCase())) {
+    await addTracked(addr.toLowerCase());
+    seeded++;
+  }
+}
+if (seeded > 0) console.log(`[Seed] Added ${seeded} new whale wallet(s) to tracked list`);
 
 // Init subsystems
 initTracker(process.env.ALCHEMY_API_KEY);
