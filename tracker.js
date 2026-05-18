@@ -53,6 +53,12 @@ export const mintEvents = new EventEmitter();
 let alchemy;
 let activeSubscription = null;
 let heartbeatInterval = null;
+let watchdogInterval = null;
+let lastWsEventAt = Date.now(); // updated on every WS event
+
+function touchWs() {
+  lastWsEventAt = Date.now();
+}
 
 export function initTracker(apiKey) {
   alchemy = new Alchemy({
@@ -62,6 +68,7 @@ export function initTracker(apiKey) {
   console.log("[Tracker] Alchemy SDK initialized");
   startTMATracking();
   startHeartbeat();
+  startWatchdog();
 }
 
 function startTMATracking() {
@@ -73,6 +80,7 @@ function startTMATracking() {
       hashesOnly: false,
     },
     (tx) => {
+      touchWs();
       const transaction = tx.transaction;
       if (!transaction || !transaction.to) return;
 
@@ -111,6 +119,22 @@ function startHeartbeat() {
   }, 2 * 60 * 1000); // every 2 minutes
 }
 
+// Watchdog: if no WS event has been received in 15 min, the subscription silently died.
+// Force-restart regardless of HTTP heartbeat status.
+function startWatchdog() {
+  if (watchdogInterval) clearInterval(watchdogInterval);
+  const STALE_MS = 15 * 60 * 1000; // 15 minutes
+  watchdogInterval = setInterval(async () => {
+    const staleSec = Math.floor((Date.now() - lastWsEventAt) / 1000);
+    if (staleSec > STALE_MS / 1000) {
+      console.warn(`[Tracker] Watchdog: no WS event in ${staleSec}s — restarting subscriptions`);
+      await restartAllSubscriptions();
+    } else {
+      console.log(`[Tracker] Watchdog OK — last WS event ${staleSec}s ago`);
+    }
+  }, 5 * 60 * 1000); // check every 5 minutes
+}
+
 async function restartAllSubscriptions() {
   try {
     alchemy.ws.removeAllListeners();
@@ -147,6 +171,7 @@ export async function startTracking() {
       hashesOnly: false,
     },
     (tx) => {
+      touchWs();
       const transaction = tx.transaction;
       if (!transaction) return;
 
