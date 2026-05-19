@@ -66,6 +66,35 @@ async function getEthUsdPrice() {
   }
 }
 
+// For SeaDrop mints the actual NFT contract is in the calldata, not tx.to
+function getNftContract(to, data) {
+  if (to?.toLowerCase() === SEADROP_ADDRESS) {
+    try {
+      const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
+      return decoded.nftContract;
+    } catch {}
+  }
+  return to;
+}
+
+const collectionNameCache = new Map();
+async function getCollectionName(contractAddress) {
+  if (!contractAddress) return null;
+  const addr = contractAddress.toLowerCase();
+  if (collectionNameCache.has(addr)) return collectionNameCache.get(addr);
+  try {
+    const iface = new ethers.Interface(["function name() view returns (string)"]);
+    const result = await provider.call({ to: contractAddress, data: iface.encodeFunctionData("name", []) });
+    const [name] = iface.decodeFunctionResult("name", result);
+    const trimmed = name?.trim() || null;
+    collectionNameCache.set(addr, trimmed);
+    return trimmed;
+  } catch {
+    collectionNameCache.set(addr, null);
+    return null;
+  }
+}
+
 // USD tiers: price per NFT → how many we mint
 // < $0.15  → 10  |  $0.15–$0.30 → 3  |  $0.30–$0.51 → 2  |  > $0.51 → skip
 function getTargetQty(priceUsdPerNft) {
@@ -358,8 +387,10 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     }
 
     const mainAddr = await mainSigner.getAddress();
+    const nftContract = getNftContract(mintTx.to, mintTx.data);
+    const collectionName = await getCollectionName(nftContract);
     await logMint({
-      contract: mintTx.to.toLowerCase(),
+      contract: nftContract.toLowerCase(),
       wallet: mainAddr.toLowerCase(),
       txHash,
       ethSpent: parseFloat(ethers.formatEther(mintTx.value)),
@@ -368,7 +399,8 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
 
     await telegramNotify(
       `✅ *Copy Mint Successful!*\n\n` +
-      `📄 Contract: \`${mintTx.to}\`\n` +
+      (collectionName ? `🎨 *${collectionName}*\n` : ``) +
+      `📄 Contract: \`${nftContract}\`\n` +
       `⛓️ Chain: Ethereum\n` +
       `💎 Minted to: \`${mainAddr}\``,
       txHash
@@ -485,11 +517,14 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     maxPriorityFeePerGas,
   };
 
+  const subNftContract = getNftContract(mintTx.to, mintTx.data);
+  const subCollectionName = await getCollectionName(subNftContract);
+
   const results = await Promise.allSettled(
     funded.map(async (signer) => {
       const tx = await signer.sendTransaction(mintTx);
       await logMint({
-        contract: mintTx.to.toLowerCase(),
+        contract: subNftContract.toLowerCase(),
         wallet: signer.address.toLowerCase(),
         txHash: tx.hash,
         ethSpent: parseFloat(ethers.formatEther(txValue)),
@@ -504,6 +539,8 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
 
   await telegramNotify(
     `💼 *Sub-Wallet Mints Complete*\n\n` +
+    (subCollectionName ? `🎨 *${subCollectionName}*\n` : ``) +
+    `📄 Contract: \`${subNftContract}\`\n` +
     `✅ Succeeded: ${succeeded}\n` +
     `❌ Failed: ${failed}\n` +
     `⏭️ Skipped (no balance): ${signers.length - funded.length}`
