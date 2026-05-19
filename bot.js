@@ -109,7 +109,7 @@ function isValidAddress(addr) {
 }
 
 function shortAddr(addr) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+  return addr;
 }
 
 function formatStatusMessage() {
@@ -1204,7 +1204,7 @@ bot.command("decode", async (ctx) => {
           ).join("\n\n");
 
           return ctx.reply(
-            `🔍 *Mint Functions — \`${contract.slice(0, 8)}...\`*\n\n${lines}\n\n` +
+            `🔍 *Mint Functions — \`${contract}\`*\n\n${lines}\n\n` +
             `💰 = payable (pass ETH value)\n\n` +
             `Example: \`/mint ${contract} mine ${mintFns[0].selector}${mintFns[0].payable ? " 0.05" : ""}\``,
             { parse_mode: "Markdown" }
@@ -1257,7 +1257,7 @@ bot.command("decode", async (ctx) => {
 
   if (hits.length === 0) {
     return ctx.reply(
-      `❌ Couldn't identify mint functions on \`${contract.slice(0, 8)}...\`\n\n` +
+      `❌ Couldn't identify mint functions on \`${contract}\`\n\n` +
       `Try checking Etherscan manually for the Input Data on a recent tx.\n\n` +
       `Add ETHERSCAN_API_KEY to Railway env for verified contract support.`,
       { parse_mode: "Markdown" }
@@ -1266,7 +1266,7 @@ bot.command("decode", async (ctx) => {
 
   const lines = hits.map(h => `\`${h.selector}\` — *${h.sig}* ${h.status}`).join("\n");
   await ctx.reply(
-    `🔍 *Selector Probe — \`${contract.slice(0, 8)}...\`*\n\n${lines}\n\n` +
+    `🔍 *Selector Probe — \`${contract}\`*\n\n${lines}\n\n` +
     `Use: \`/mint ${contract} [group] <selector> [value]\``,
     { parse_mode: "Markdown" }
   );
@@ -1399,7 +1399,7 @@ bot.command("watches", async (ctx) => {
     const status = w.active ? "👁 Active" : "✅ Fired";
     const target = w.group ? `group: ${w.group}` : "all wallets";
     const date = new Date(w.createdAt).toLocaleDateString();
-    return `${status} | \`${w.nftContract.slice(0, 10)}...\` | ${target} | ${date}\nID: \`${w.id.slice(0, 8)}\``;
+    return `${status} | \`${w.nftContract}\` | ${target} | ${date}\nID: \`${w.id.slice(0, 8)}\``;
   });
 
   await ctx.reply(
@@ -1472,7 +1472,7 @@ bot.command("watchsweep", async (ctx) => {
   await addSweepWatcher({
     id,
     wallet: addr,
-    name: name || (addr.slice(0, 6) + "..." + addr.slice(-4)),
+    name: name || addr,
     threshold,
     lastBlock: startBlock,
     createdAt: Date.now(),

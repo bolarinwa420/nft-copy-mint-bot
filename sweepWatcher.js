@@ -93,7 +93,7 @@ async function poll() {
 }
 
 async function fireAlert(watcher, nftContract, count, txHash) {
-  const name = watcher.name || shortAddr(watcher.wallet);
+  const name = watcher.name || watcher.wallet;
   await notifyFn(
     `🐋 *SWEEP ALERT — ${name}*\n\n` +
     `Collection: \`${nftContract}\`\n` +
@@ -105,6 +105,3 @@ async function fireAlert(watcher, nftContract, count, txHash) {
   );
 }
 
-function shortAddr(addr) {
-  return addr.slice(0, 6) + "..." + addr.slice(-4);
-}

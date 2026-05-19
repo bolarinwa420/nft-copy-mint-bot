@@ -324,12 +324,11 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
       timestamp: Date.now(),
     });
 
-    const shortContract = `${mintTx.to.slice(0, 6)}...${mintTx.to.slice(-4)}`;
     await telegramNotify(
       `✅ *Copy Mint Successful!*\n\n` +
-      `📄 Contract: \`${shortContract}\`\n` +
+      `📄 Contract: \`${mintTx.to}\`\n` +
       `⛓️ Chain: Ethereum\n` +
-      `💎 Minted to: \`${mainAddr.slice(0, 6)}...${mainAddr.slice(-4)}\``,
+      `💎 Minted to: \`${mainAddr}\``,
       txHash
     );
     return txHash;
