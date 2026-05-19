@@ -41,8 +41,7 @@ let telegramAskApproval;
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
-const MAX_PAID_QUANTITY = 5;
-const THRESHOLD_ETH = ethers.parseEther("0.000043"); // ~$0.15 — per-unit ceiling
+const SKIP_ABOVE_USD = 0.51;
 const APPROVAL_TIMEOUT_MS = 120000;
 
 const pendingApprovals = new Map();
@@ -67,17 +66,50 @@ async function getEthUsdPrice() {
   }
 }
 
-// Mint quantity rules:
-//   Free (value=0)                          → no cap, mint max
-//   Paid, per-unit > THRESHOLD_ETH          → skip entirely
-//   Paid, 5 × per-unit ≤ THRESHOLD_ETH     → mint 5
-//   Paid, 1 × per-unit ≤ THRESHOLD_ETH
-//         but 5 × per-unit > THRESHOLD_ETH → mint 1
-async function adjustMintQuantity(rawData, txValue, isFree) {
+// USD tiers: price per NFT → how many we mint
+// < $0.15  → 10  |  $0.15–$0.30 → 3  |  $0.30–$0.51 → 2  |  > $0.51 → skip
+function getTargetQty(priceUsdPerNft) {
+  if (priceUsdPerNft < 0.15) return 10;
+  if (priceUsdPerNft <= 0.30) return 3;
+  return 2;
+}
+
+// Check if the contract enforces a per-wallet limit. Runs all probes in parallel; cached.
+const walletLimitCache = new Map();
+async function checkMaxPerWallet(contractAddress) {
+  const addr = contractAddress.toLowerCase();
+  if (walletLimitCache.has(addr)) return walletLimitCache.get(addr);
+
+  const names = [
+    "maxPerWallet", "maxMintPerWallet", "maxPerAddress", "maxMintPerAddress",
+    "walletLimit", "limitPerWallet", "MAX_PER_WALLET", "maxTokensPerWallet",
+    "maxMintsPerWallet",
+  ];
+
+  const results = await Promise.allSettled(
+    names.map(async (name) => {
+      const iface = new ethers.Interface([`function ${name}() view returns (uint256)`]);
+      const raw = await provider.call({
+        to: contractAddress,
+        data: iface.encodeFunctionData(name, []),
+      });
+      const [max] = iface.decodeFunctionResult(name, raw);
+      if (max > 0n && max <= 20n) return Number(max);
+      throw new Error("out of range");
+    })
+  );
+
+  const hit = results.find((r) => r.status === "fulfilled");
+  const limit = hit ? hit.value : null;
+  walletLimitCache.set(addr, limit);
+  return limit;
+}
+
+async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = null) {
   const data = rawData || "0x";
   const value = BigInt(txValue || 0);
 
-  // Free mint — no cap at all
+  // Free mint — no cap, send as-is
   if (isFree) return { data, value, skip: false, originalQty: null, newQty: null };
 
   // Detect quantity from calldata
@@ -105,24 +137,34 @@ async function adjustMintQuantity(rawData, txValue, isFree) {
   const effectiveQty = originalQty || 1;
   const pricePerNft = value / BigInt(effectiveQty);
 
-  // Per-unit exceeds threshold → skip
-  if (pricePerNft > THRESHOLD_ETH) {
+  // Convert to USD and apply ceiling
+  const ethUsd = await getEthUsdPrice();
+  const priceUsdPerNft = parseFloat(ethers.formatEther(pricePerNft)) * ethUsd;
+
+  if (priceUsdPerNft > SKIP_ABOVE_USD) {
     return { data, value, skip: true, originalQty, newQty: 0, pricePerNft };
   }
 
-  // Quantity is 1 or unknown — no re-encoding needed, just send
-  if (!originalQty || originalQty <= 1) {
-    return { data, value, skip: false, originalQty, newQty: 1 };
+  // Can't detect qty → send original calldata as-is (qty=1 implied)
+  if (originalQty === null) {
+    return { data, value, skip: false, originalQty: null, newQty: 1 };
   }
 
-  // 5 units affordable → mint 5, otherwise mint 1
-  const newQty = pricePerNft * BigInt(MAX_PAID_QUANTITY) <= THRESHOLD_ETH
-    ? MAX_PAID_QUANTITY
-    : 1;
+  // Determine target qty from USD tiers
+  let newQty = getTargetQty(priceUsdPerNft);
 
-  if (newQty >= originalQty) return { data, value, skip: false, originalQty, newQty: originalQty };
+  // Respect contract's per-wallet limit (e.g. 1 per wallet)
+  if (contractAddress) {
+    const contractMax = await checkMaxPerWallet(contractAddress);
+    if (contractMax !== null && contractMax < newQty) newQty = contractMax;
+  }
 
-  // Re-encode calldata with new quantity
+  // No re-encoding needed
+  if (newQty >= originalQty) {
+    return { data, value, skip: false, originalQty, newQty: originalQty };
+  }
+
+  // Re-encode calldata with adjusted quantity
   let newData = data;
   if (isSeaDrop) {
     try {
@@ -270,11 +312,11 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
   const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
   const { data: adjData, value: adjValue, skip, originalQty, newQty } =
-    await adjustMintQuantity(rawData, rawTxValue, rawTxValue === 0n);
+    await adjustMintQuantity(rawData, rawTxValue, rawTxValue === 0n, whaleTx.to);
 
   if (skip) {
     await telegramNotify(
-      `⛔ *Main Wallet — Skipped*\n\nPer-unit price exceeds 0.000043 ETH (~$0.15) — not minting.`
+      `⛔ *Main Wallet — Skipped*\n\nPer-unit price exceeds $0.51 — not minting.`
     );
     return;
   }
@@ -361,12 +403,13 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     await adjustMintQuantity(
       whaleTx.input || whaleTx.data || "0x",
       rawTxValue,
-      rawTxValue === 0n
+      rawTxValue === 0n,
+      whaleTx.to
     );
 
   if (subSkip) {
     await telegramNotify(
-      `⛔ *Sub-Wallets — Skipped*\n\nPer-unit price exceeds 0.000043 ETH (~$0.15) — not minting on any wallet.`
+      `⛔ *Sub-Wallets — Skipped*\n\nPer-unit price exceeds $0.51 — not minting on any wallet.`
     );
     return;
   }
