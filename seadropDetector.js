@@ -92,7 +92,7 @@ function startSeadropDetection() {
               (whaleLabel ? `${whaleLabel}\n` : ``) +
               `*${name}*\n` +
               `\`${nftContract}\`\n\n` +
-              `Whale: \`${minter.slice(0,6)}...${minter.slice(-4)}\`\n` +
+              `Whale: \`${minter}\`\n` +
               `Price: *${priceStr}*\n` +
               `Status: 🟢 Live Now\n\n` +
               `[OpenSea](https://opensea.io/assets/ethereum/${nftContract}) | [Etherscan](https://etherscan.io/address/${nftContract})`,

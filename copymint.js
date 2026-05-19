@@ -220,7 +220,7 @@ async function handleMintDetected({ whale, contract, tx }) {
   const alertMsg =
     `🐋 *Whale Mint Detected!*\n\n` +
     (whaleLabel ? `${whaleLabel}\n` : ``) +
-    `Whale: \`${whale.slice(0, 6)}...${whale.slice(-4)}\`\n` +
+    `Whale: \`${whale}\`\n` +
     `Contract: \`${contract}\`\n` +
     `Whale paid: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
     `Chain: Ethereum\n` +
