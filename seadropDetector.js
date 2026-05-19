@@ -14,15 +14,7 @@ const SEADROP_MINT_TOPIC = ethers.id(
 // topics[3] = feeRecipient (indexed)
 // data      = payer, quantityMinted, unitMintPrice, feeBps, dropStageIndex
 
-const MAX_SMART_ALERTS  = 3;  // max smart-money alerts per contract
-const VELOCITY_THRESHOLD = 10; // unique wallets in window to trigger trending alert
-const VELOCITY_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-const MAX_TREND_ALERTS  = 1;  // fire trending alert only once per contract
-
-// velocity tracker: contract → { wallets: Set, firstMintAt }
-const velocity = new Map();
-// contracts that already fired a trending alert
-const trendAlerted = new Set();
+const MAX_SMART_ALERTS = 3; // max alerts per contract per whale
 
 let storedNotifyFn;
 
@@ -34,20 +26,6 @@ async function getCollectionName(contract) {
   } catch {
     return null;
   }
-}
-
-function trackVelocity(contract, minter) {
-  const now = Date.now();
-  if (!velocity.has(contract)) {
-    velocity.set(contract, { wallets: new Set(), firstMintAt: now });
-  }
-  const entry = velocity.get(contract);
-  if (now - entry.firstMintAt > VELOCITY_WINDOW_MS) {
-    entry.wallets = new Set();
-    entry.firstMintAt = now;
-  }
-  entry.wallets.add(minter.toLowerCase());
-  return entry.wallets.size;
 }
 
 function startSeadropDetection() {
@@ -66,6 +44,13 @@ function startSeadropDetection() {
         const ca          = nftContract.toLowerCase();
         const minterLow   = minter.toLowerCase();
 
+        const tracked  = getTracked();
+        const isWhale  = tracked.includes(minterLow);
+        if (!isWhale) return; // silence everything except tracked signal wallets
+
+        const alertCount = getSeadropAlertCount(`smart_${ca}`);
+        if (alertCount >= MAX_SMART_ALERTS) return;
+
         const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
           ["address", "uint256", "uint256", "uint256", "uint256"],
           log.data
@@ -75,53 +60,23 @@ function startSeadropDetection() {
           ? "FREE"
           : `${Number(ethers.formatEther(unitMintPrice)).toFixed(4)} ETH`;
 
-        // ── Smart money signal ───────────────────────────────────────────────
-        const tracked   = getTracked();
+        await incrementSeadropAlertCount(`smart_${ca}`);
         const whaleLabel = getWhaleLabel(minterLow);
-        const isWhale   = tracked.includes(minterLow);
+        const name = (await getCollectionName(nftContract)) || "Unknown Collection";
+        console.log(`[SeadropDetector] 🚨 Signal wallet: ${minterLow} minted ${name}`);
 
-        if (isWhale) {
-          const alertCount = getSeadropAlertCount(`smart_${ca}`);
-          if (alertCount < MAX_SMART_ALERTS) {
-            await incrementSeadropAlertCount(`smart_${ca}`);
-            const name = (await getCollectionName(nftContract)) || "Unknown Collection";
-            console.log(`[SeadropDetector] 🚨 Smart money: ${minterLow} minted ${name}`);
-
-            await storedNotifyFn(
-              `🚨 *Smart Money SeaDrop!*\n\n` +
-              (whaleLabel ? `${whaleLabel}\n` : ``) +
-              `*${name}*\n` +
-              `\`${nftContract}\`\n\n` +
-              `Whale: \`${minter}\`\n` +
-              `Price: *${priceStr}*\n` +
-              `Status: 🟢 Live Now\n\n` +
-              `[OpenSea](https://opensea.io/assets/ethereum/${nftContract}) | [Etherscan](https://etherscan.io/address/${nftContract})`,
-              null,
-              "Markdown"
-            );
-          }
-        }
-
-        // ── Velocity / trending signal ───────────────────────────────────────
-        const uniqueCount = trackVelocity(ca, minterLow);
-
-        if (uniqueCount >= VELOCITY_THRESHOLD && !trendAlerted.has(ca)) {
-          trendAlerted.add(ca);
-          const name = (await getCollectionName(nftContract)) || "Unknown Collection";
-          console.log(`[SeadropDetector] 📊 Trending: ${name} — ${uniqueCount} unique minters in 10min`);
-
-          await storedNotifyFn(
-            `📊 *Trending SeaDrop!*\n\n` +
-            `*${name}*\n` +
-            `\`${nftContract}\`\n\n` +
-            `${uniqueCount}+ unique wallets minted in the last 10 min\n` +
-            `Price: *${priceStr}*\n` +
-            `Status: 🟢 Live Now\n\n` +
-            `[OpenSea](https://opensea.io/assets/ethereum/${nftContract}) | [Etherscan](https://etherscan.io/address/${nftContract})`,
-            null,
-            "Markdown"
-          );
-        }
+        await storedNotifyFn(
+          `🚨 *Signal Wallet SeaDrop!*\n\n` +
+          (whaleLabel ? `${whaleLabel}\n` : ``) +
+          `*${name}*\n` +
+          `\`${nftContract}\`\n\n` +
+          `Wallet: \`${minter}\`\n` +
+          `Price: *${priceStr}*\n` +
+          `Status: 🟢 Live Now\n\n` +
+          `[OpenSea](https://opensea.io/assets/ethereum/${nftContract}) | [Etherscan](https://etherscan.io/address/${nftContract})`,
+          null,
+          "Markdown"
+        );
 
       } catch (e) {
         console.error("[SeadropDetector] Error:", e.message);
@@ -129,7 +84,7 @@ function startSeadropDetection() {
     }
   );
 
-  console.log("[SeadropDetector] Listening — smart money + velocity filters active");
+  console.log("[SeadropDetector] Listening — signal wallets only (no velocity noise)");
 }
 
 export function initSeadropDetector(notifyFn) {
