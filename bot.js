@@ -14,6 +14,7 @@ import { initSalesWatcher } from "./salesWatcher.js";
 import { initSeadropDetector } from "./seadropDetector.js";
 import { initNewCollectionWatcher } from "./newCollectionWatcher.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
+import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -1138,6 +1139,107 @@ bot.command("mint", async (ctx) => {
   }
 });
 
+// ─── Mint From Contract (ABI auto-detect) ────────────────────────────────────
+
+bot.command("mintca", async (ctx) => {
+  const input = ctx.match?.trim();
+  if (!input) {
+    return ctx.reply(
+      `*Mint From Contract*\n\n` +
+      `Fetches ABI from Etherscan, auto-detects the mint function and price, then fires on all wallets (or a group).\n\n` +
+      `Usage: \`/mintca <contract> [group] [qty]\`\n\n` +
+      `Examples:\n` +
+      `\`/mintca 0xContract\` — 1 mint per wallet, all wallets\n` +
+      `\`/mintca 0xContract mine 5\` — 5 mints per wallet, group "mine"`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const args = input.split(/\s+/);
+  let contract = null, group = null, qty = 1;
+
+  for (const arg of args) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(arg) && !contract) {
+      contract = arg;
+    } else if (/^\d+$/.test(arg)) {
+      qty = Math.max(1, parseInt(arg));
+    } else if (/^[a-zA-Z0-9_-]+$/.test(arg)) {
+      group = arg;
+    }
+  }
+
+  if (!contract) {
+    return ctx.reply("❌ Provide a valid contract address.\n\nUsage: `/mintca 0xContract [group] [qty]`", { parse_mode: "Markdown" });
+  }
+
+  await ctx.reply(`🔍 Reading contract \`${contract}\`...`, { parse_mode: "Markdown" });
+
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+  const abi = await fetchABI(contract, apiKey);
+  const mintFn = findBestMintFn(abi);
+  const priceEth = await readMintPrice(provider, contract, abi);
+  const walletAddr = await mainSigner.getAddress();
+
+  // Build calldata from ABI; fall back to tx-sniff if ABI unavailable
+  let calldata = mintFn ? buildMintCalldata(mintFn, qty, walletAddr) : null;
+  let fnSig = mintFn ? mintFnSignature(mintFn) : null;
+  let abiSource = abi ? "Etherscan ABI" : "tx history";
+
+  if (!calldata) {
+    const detected = await autoDetectCalldata(contract, qty);
+    if (detected) {
+      calldata = detected.calldata;
+      fnSig = detected.sig;
+      abiSource = "tx history (unverified)";
+    }
+  }
+
+  if (!calldata) {
+    return ctx.reply(
+      `❌ *Could not detect mint function.*\n\n` +
+      (abi
+        ? `Contract is verified but no standard mint function found.`
+        : `Contract is not verified on Etherscan and no matching txs found.`) +
+      `\n\nTry \`/decode ${contract}\` to inspect manually, then use \`/mint\`.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const isFree = priceEth === "0";
+  const totalEth = isFree ? 0 : parseFloat(priceEth) * qty;
+  const totalEthStr = totalEth.toFixed(6);
+
+  await ctx.reply(
+    `⚡ *Contract Mint Firing...*\n\n` +
+    `Contract: \`${contract}\`\n` +
+    `Function: \`${fnSig}\`\n` +
+    `Qty per wallet: ${qty}\n` +
+    `Price: ${isFree ? "🆓 FREE" : `${priceEth} ETH × ${qty} = ${totalEthStr} ETH`}\n` +
+    `Wallets: ${group ? `group *${group}*` : "all sub-wallets"}\n` +
+    `Source: ${abiSource}`,
+    { parse_mode: "Markdown" }
+  );
+
+  try {
+    const { succeeded, failed, skipped, total } = await executeManualMint(
+      contract,
+      calldata,
+      isFree ? "0" : totalEthStr,
+      group || null
+    );
+    await ctx.reply(
+      `✅ *Contract Mint Complete!*\n\n` +
+      `✅ Succeeded: ${succeeded}\n` +
+      `❌ Failed: ${failed}\n` +
+      `⏭️ Skipped (low balance): ${skipped}\n` +
+      `📊 Total wallets: ${total}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Mint failed: ${err.message}`);
+  }
+});
+
 // ─── Decode Contract ──────────────────────────────────────────────────────────
 
 const MINT_KEYWORDS = ["mint", "claim", "purchase", "buy", "presale", "allowlist", "whitelist"];
@@ -2233,6 +2335,7 @@ bot.start({
       { command: "unblacklist",     description: "Remove contract from blacklist" },
       // Manual mint
       { command: "mint",            description: "Fire a manual mint now" },
+      { command: "mintca",          description: "Auto-detect mint fn + price from contract ABI, then mint" },
       // Wallets
       { command: "wallets",         description: "List all sub-wallets with balances" },
       { command: "addwallet",       description: "Add a sub-wallet" },
