@@ -13,6 +13,7 @@ import { initDailyDigest } from "./dailyDigest.js";
 import { initSalesWatcher } from "./salesWatcher.js";
 import { initSeadropDetector } from "./seadropDetector.js";
 import { initNewCollectionWatcher } from "./newCollectionWatcher.js";
+import { initMintFloorTracker } from "./mintFloorTracker.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { WHALE_SEED } from "./whale-meta.js";
@@ -100,6 +101,7 @@ initDailyDigest(notify);
 initSalesWatcher(notify);
 initSeadropDetector(notify);
 initNewCollectionWatcher(notify);
+initMintFloorTracker(notify);
 startWatcher();
 await startTracking();
 

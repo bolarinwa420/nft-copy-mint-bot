@@ -20,6 +20,7 @@ const defaultData = {
   sweepWatchers: [], // sweep watchers: [{ id, wallet, name, threshold, lastBlock, createdAt }]
   seadropAlertCounts: {}, // { [contractAddress]: alertCount } — persisted across deploys
   newCollectionAlertCounts: {}, // { [contractAddress]: alertCount } — persisted across deploys
+  mintFloorBaselines: {}, // { [contract]: { baselineFloor, setAt, firedMilestones: [] } }
 };
 
 let db;
@@ -289,4 +290,30 @@ export async function incrementNewCollectionAlertCount(contract) {
   const ca = contract.toLowerCase();
   db.data.newCollectionAlertCounts[ca] = (db.data.newCollectionAlertCounts[ca] || 0) + 1;
   await db.write();
+}
+
+// --- Mint Floor Baselines ---
+
+export function getMintFloorBaseline(contract) {
+  if (!db.data.mintFloorBaselines) return null;
+  return db.data.mintFloorBaselines[contract.toLowerCase()] || null;
+}
+
+export async function setMintFloorBaseline(contract, floor) {
+  if (!db.data.mintFloorBaselines) db.data.mintFloorBaselines = {};
+  const ca = contract.toLowerCase();
+  db.data.mintFloorBaselines[ca] = { baselineFloor: floor, setAt: Date.now(), firedMilestones: [] };
+  await db.write();
+}
+
+export async function addFiredMilestone(contract, milestone) {
+  if (!db.data.mintFloorBaselines) return;
+  const ca = contract.toLowerCase();
+  const rec = db.data.mintFloorBaselines[ca];
+  if (!rec) return;
+  if (!rec.firedMilestones) rec.firedMilestones = [];
+  if (!rec.firedMilestones.includes(milestone)) {
+    rec.firedMilestones.push(milestone);
+    await db.write();
+  }
 }
