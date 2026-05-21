@@ -1,7 +1,7 @@
 import { getMintLog, getMintFloorBaseline, setMintFloorBaseline, addFiredMilestone } from "./storage.js";
 
 const RESERVOIR_BASE = "https://api.reservoir.tools";
-const POLL_INTERVAL = 20 * 60 * 1000; // 20 minutes
+const POLL_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
 
 // Milestones to alert on (% change from baseline)
 const UP_MILESTONES   = [50, 100, 200, 500];
@@ -116,5 +116,5 @@ async function poll(notifyFn) {
 export function initMintFloorTracker(notifyFn) {
   poll(notifyFn).catch(console.error);
   setInterval(() => poll(notifyFn).catch(console.error), POLL_INTERVAL);
-  console.log("[MintFloorTracker] Started — polling every 20 min");
+  console.log("[MintFloorTracker] Started — polling every 6 hours");
 }
