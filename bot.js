@@ -195,6 +195,7 @@ bot.command("start", async (ctx) => {
     `/togglefreemints — allow/block free mints\n` +
     `/togglecatchall — fire on ANY whale contract call (catches unknown mints)\n` +
     `/profits [contract] — mint profit tracker\n` +
+    `/volume [7d] — volume tracker for minted contracts\n` +
     `/history [page] — full mint transaction history\n` +
     `/schedule — schedule a mint\n` +
     `/jobs — view scheduled mints\n` +
@@ -261,7 +262,8 @@ bot.command("commands", async (ctx) => {
 
     `*📈 History & Profits*\n` +
     `/history [page] — full mint log\n` +
-    `/profits [contract] — P&L tracker with floor prices\n\n` +
+    `/profits [contract] — P&L tracker with floor prices\n` +
+    `/volume [7d] — volume tracker for minted contracts, sorted by 24h (or 7d) vol\n\n` +
 
     `*🔔 Price Alerts*\n` +
     `/setalert <contract> <name> <price> — alert when floor hits target ETH\n` +
@@ -1877,6 +1879,85 @@ bot.command("profits", async (ctx) => {
   );
 });
 
+// ─── Volume Tracker ───────────────────────────────────────────────────────────
+
+async function fetchVolumeStats(contracts) {
+  const BATCH = 20;
+  const results = {};
+
+  for (let i = 0; i < contracts.length; i += BATCH) {
+    const chunk = contracts.slice(i, i + BATCH);
+    const params = chunk.map(c => `contract=${c}`).join("&");
+    try {
+      const res = await fetch(
+        `https://api.reservoir.tools/collections/v7?${params}&limit=${BATCH}`,
+        { headers: { accept: "application/json" } }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const col of data?.collections || []) {
+        const ca = (col.primaryContract || col.id || "").toLowerCase();
+        if (!ca) continue;
+        results[ca] = {
+          name: col.name || ca,
+          volume24h: Number(col.volume?.["1day"] ?? 0),
+          volume7d: Number(col.volume?.["7day"] ?? 0),
+          sales24h: Number(col.salesCount?.["1day"] ?? 0),
+          floor: col.floorAsk?.price?.amount?.native ?? null,
+        };
+      }
+    } catch (e) {
+      console.error(`[Volume] Reservoir error: ${e.message}`);
+    }
+  }
+
+  return results;
+}
+
+bot.command("volume", async (ctx) => {
+  const arg = ctx.match?.trim()?.toLowerCase();
+  const sortBy7d = arg === "7d";
+
+  const log = getMintLog();
+  if (log.length === 0) {
+    return ctx.reply("No mints recorded yet.");
+  }
+
+  const uniqueContracts = [...new Set(log.map(e => e.contract?.toLowerCase()).filter(Boolean))];
+  if (uniqueContracts.length === 0) {
+    return ctx.reply("No contracts in mint log.");
+  }
+
+  await ctx.reply(`📈 Fetching volume data for ${uniqueContracts.length} contract(s)...`);
+
+  const stats = await fetchVolumeStats(uniqueContracts);
+
+  const enriched = uniqueContracts
+    .map(ca => ({ ca, ...(stats[ca] || { name: ca, volume24h: 0, volume7d: 0, sales24h: 0, floor: null }) }))
+    .sort((a, b) => sortBy7d ? b.volume7d - a.volume7d : b.volume24h - a.volume24h)
+    .slice(0, 10);
+
+  const lines = enriched.map((col, idx) => {
+    const floor = col.floor != null ? `${Number(col.floor).toFixed(4)} ETH` : "—";
+    const vol24 = col.volume24h > 0 ? `${col.volume24h.toFixed(2)} ETH` : "—";
+    const vol7 = col.volume7d > 0 ? `${col.volume7d.toFixed(2)} ETH` : "—";
+    return (
+      `*#${idx + 1} ${col.name}*\n` +
+      `\`${col.ca}\`\n` +
+      `24h Vol: ${vol24} | 24h Sales: ${col.sales24h}\n` +
+      `7d Vol: ${vol7} | Floor: ${floor}`
+    );
+  });
+
+  const sortLabel = sortBy7d ? "7-day" : "24h";
+  await ctx.reply(
+    `📈 *Volume Tracker* — ${uniqueContracts.length} contract(s) minted\n` +
+    `_Sorted by ${sortLabel} volume — showing top ${enriched.length}_\n\n` +
+    lines.join("\n\n─────────────────\n\n"),
+    { parse_mode: "Markdown" }
+  );
+});
+
 // ─── Mint History ─────────────────────────────────────────────────────────────
 
 bot.command("history", async (ctx) => {
@@ -2358,6 +2439,7 @@ bot.start({
       // History & profits
       { command: "history",         description: "Full mint log (paginated)" },
       { command: "profits",         description: "P&L tracker with floor prices" },
+      { command: "volume",          description: "Volume tracker for minted contracts" },
       // Price alerts
       { command: "setalert",        description: "Alert when floor hits target ETH" },
       { command: "removealert",     description: "Remove a price alert" },
