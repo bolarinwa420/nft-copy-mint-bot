@@ -4,7 +4,7 @@ import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts, addSweepWatcher, removeSweepWatcher, getSweepWatchers } from "./storage.js";
 import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
-import { initTracker, startTracking, restartTracking, getAlchemy } from "./tracker.js";
+import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
@@ -123,10 +123,17 @@ function formatStatusMessage() {
   const bl = settings.blacklist || [];
   const mintLog = getMintLog();
 
+  const ws = getTrackerState();
+  const wsMin = Math.floor(ws.staleSeconds / 60);
+  const wsSec = ws.staleSeconds % 60;
+  const wsAge = wsMin > 0 ? `${wsMin}m ${wsSec}s ago` : `${wsSec}s ago`;
+  const wsIcon = ws.staleSeconds < 300 ? on : ws.staleSeconds < 900 ? "🟡" : off;
+
   return (
     `✅ *Status Update*\n\n` +
     `*Modules:*\n` +
     `Tracker: ${tracked.length > 0 ? on : off}\n` +
+    `WebSocket: ${wsIcon} last event ${wsAge}\n` +
     `Auto-Mint: ${settings.autoMint ? on + " ON" : off + " OFF"}\n` +
     `MEV Shield: ${settings.mevShield ? on + " ON" : off + " OFF"}\n` +
     `Max Mint: $${settings.maxMintUsd || "0.51"} USD\n` +
@@ -325,6 +332,33 @@ bot.command("tracked", async (ctx) => {
   await ctx.reply(`🐋 *Tracked Wallets (${tracked.length}):*\n\n${list}`, {
     parse_mode: "Markdown",
   });
+});
+
+bot.command("trackerstate", async (ctx) => {
+  const ws = getTrackerState();
+  const tracked = getTracked();
+  const wsMin = Math.floor(ws.staleSeconds / 60);
+  const wsSec = ws.staleSeconds % 60;
+  const wsAge = wsMin > 0 ? `${wsMin}m ${wsSec}s ago` : `${wsSec}s ago`;
+  const wsIcon = ws.staleSeconds < 300 ? "🟢" : ws.staleSeconds < 900 ? "🟡" : "🔴";
+
+  await ctx.reply(
+    `*Tracker State*\n\n` +
+    `WebSocket: ${wsIcon} last event *${wsAge}*\n` +
+    `Subscription: ${ws.subscriptionActive ? "🟢 active" : "🔴 not active"}\n` +
+    `Tracked whales: ${tracked.length}\n\n` +
+    (ws.staleSeconds > 900
+      ? `⚠️ No WS events in ${wsMin}m — watchdog should restart soon. If still silent after 5 min, use /restarttracker.`
+      : ws.staleSeconds > 300
+      ? `🟡 Quiet for ${wsMin}m — whales may just not be minting.`
+      : `✅ Connection healthy.`),
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("restarttracker", async (ctx) => {
+  await restartTracking();
+  await ctx.reply("🔄 Tracker restarted — WebSocket subscriptions rebuilt.");
 });
 
 // ─── Whale Daily Activity ─────────────────────────────────────────────────────

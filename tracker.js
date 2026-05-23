@@ -197,6 +197,15 @@ export function getAlchemy() {
   return alchemy;
 }
 
+export function getTrackerState() {
+  const staleSec = Math.floor((Date.now() - lastWsEventAt) / 1000);
+  return {
+    subscriptionActive: activeSubscription !== null,
+    lastWsEventAt,
+    staleSeconds: staleSec,
+  };
+}
+
 export async function restartTracking() {
   if (activeSubscription) {
     alchemy.ws.removeAllListeners();
