@@ -41,7 +41,7 @@ let telegramAskApproval;
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
-const SKIP_ABOVE_USD = 0.51;
+const DEFAULT_SKIP_ABOVE_USD = 0.51;
 const APPROVAL_TIMEOUT_MS = 120000;
 
 const pendingApprovals = new Map();
@@ -170,7 +170,8 @@ async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = nu
   const ethUsd = await getEthUsdPrice();
   const priceUsdPerNft = parseFloat(ethers.formatEther(pricePerNft)) * ethUsd;
 
-  if (priceUsdPerNft > SKIP_ABOVE_USD) {
+  const skipAbove = parseFloat(getSettings().maxMintUsd) || DEFAULT_SKIP_ABOVE_USD;
+  if (priceUsdPerNft > skipAbove) {
     return { data, value, skip: true, originalQty, newQty: 0, pricePerNft };
   }
 
@@ -345,7 +346,7 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
 
   if (skip) {
     await telegramNotify(
-      `⛔ *Main Wallet — Skipped*\n\nPer-unit price exceeds $0.51 — not minting.`
+      `⛔ *Main Wallet — Skipped*\n\nPer-unit price exceeds max — not minting.`
     );
     return;
   }
