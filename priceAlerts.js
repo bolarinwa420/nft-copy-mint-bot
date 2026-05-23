@@ -1,30 +1,15 @@
 import { getPriceAlerts, updatePriceAlert } from "./storage.js";
-import { getAlchemy } from "./tracker.js";
 
-const POLL_INTERVAL = 2 * 60 * 1000;  // check every 2 minutes
+const POLL_INTERVAL = 5 * 60 * 1000;  // 5 min — was 2min via Alchemy NFT API (costs CUs)
 const COOLDOWN = 30 * 60 * 1000;      // re-alert max once per 30 min per contract
+const RESERVOIR_BASE = "https://api.reservoir.tools";
 
 export async function getFloorPrice(contract) {
   try {
-    const alchemy = getAlchemy();
-    if (!alchemy) {
-      console.warn("[PriceAlerts] Alchemy not initialized yet");
-      return null;
-    }
-
-    const result = await alchemy.nft.getFloorPrice(contract);
-
-    const openSea = result?.openSea;
-    if (openSea?.error) {
-      console.warn(`[PriceAlerts] OpenSea error for ${contract}: ${openSea.error}`);
-      return null;
-    }
-    if (openSea?.floorPrice == null || openSea?.priceCurrency !== "ETH") {
-      console.warn(`[PriceAlerts] No OpenSea floor price for ${contract}`);
-      return null;
-    }
-
-    return openSea.floorPrice;
+    const res = await fetch(`${RESERVOIR_BASE}/collections/v7?id=${contract}&limit=1`);
+    const data = await res.json();
+    const col = data?.collections?.[0];
+    return col?.floorAsk?.price?.amount?.native ?? null;
   } catch (e) {
     console.error(`[PriceAlerts] getFloorPrice error for ${contract}: ${e.message}`);
     return null;
@@ -69,5 +54,5 @@ export function initPriceAlerts(notify) {
   // Run once immediately, then on interval
   poll().catch(console.error);
   setInterval(() => poll().catch(console.error), POLL_INTERVAL);
-  console.log("[PriceAlerts] Polling started (2 min interval, Alchemy NFT API)");
+  console.log("[PriceAlerts] Polling started (5 min interval, Reservoir API)");
 }

@@ -2,7 +2,7 @@ import { AssetTransfersCategory } from "alchemy-sdk";
 import { getAlchemy } from "./tracker.js";
 import { getSweepWatchers, updateSweepWatcher } from "./storage.js";
 
-const POLL_INTERVAL = 30 * 1000;      // poll every 30 seconds
+const POLL_INTERVAL = 2 * 60 * 1000;  // poll every 2 min (was 30s — saves Alchemy CUs)
 const SWEEP_WINDOW  = 5 * 60 * 1000;  // rolling 5-minute window
 const COOLDOWN      = 30 * 60 * 1000; // re-alert max once per 30 min per (wallet+collection)
 
@@ -17,7 +17,7 @@ export function initSweepWatcher(notify) {
   notifyFn = notify;
   poll().catch(console.error);
   setInterval(() => poll().catch(console.error), POLL_INTERVAL);
-  console.log("[SweepWatcher] Polling started (30s interval)");
+  console.log("[SweepWatcher] Polling started (2 min interval)");
 }
 
 async function poll() {
