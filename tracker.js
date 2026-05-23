@@ -18,6 +18,14 @@ const MARKETPLACE_CONTRACTS = new Map([
 
 export const tmaEvents = new EventEmitter();
 
+let alertFn = null;
+let consecutiveHeartbeatFails = 0;
+const HEARTBEAT_ALERT_THRESHOLD = 3; // alert after 3 consecutive fails (~6 min)
+
+export function setTrackerAlertFn(fn) {
+  alertFn = fn;
+}
+
 // Known mint function selectors
 const MINT_SELECTORS = new Set([
   // ── Public mints ──────────────────────────────────────────────
@@ -112,9 +120,23 @@ function startHeartbeat() {
     try {
       await alchemy.core.getBlockNumber();
       console.log("[Tracker] Heartbeat OK");
+      consecutiveHeartbeatFails = 0;
     } catch (err) {
-      console.warn("[Tracker] Heartbeat failed — restarting subscriptions:", err.message);
+      consecutiveHeartbeatFails++;
+      console.warn(`[Tracker] Heartbeat failed (${consecutiveHeartbeatFails}x) — restarting subscriptions:`, err.message);
       await restartAllSubscriptions();
+      if (consecutiveHeartbeatFails === HEARTBEAT_ALERT_THRESHOLD && alertFn) {
+        alertFn(
+          `🚨 *Tracker down — Alchemy unreachable*\n\n` +
+          `Heartbeat has failed *${consecutiveHeartbeatFails} times in a row* (~${consecutiveHeartbeatFails * 2} min).\n\n` +
+          `Possible causes:\n` +
+          `• Alchemy CU quota exceeded\n` +
+          `• API key revoked or rotated\n` +
+          `• Alchemy service outage\n\n` +
+          `Bot is blind — no whale mints will be detected until resolved.\n` +
+          `Check your Alchemy dashboard.`
+        );
+      }
     }
   }, 2 * 60 * 1000); // every 2 minutes
 }

@@ -4,7 +4,7 @@ import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts, addSweepWatcher, removeSweepWatcher, getSweepWatchers } from "./storage.js";
 import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
-import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState } from "./tracker.js";
+import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState, setTrackerAlertFn } from "./tracker.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
@@ -90,6 +90,7 @@ if (seeded > 0) console.log(`[Seed] Added ${seeded} new whale wallet(s) to track
 
 // Init subsystems
 initTracker(process.env.ALCHEMY_API_KEY);
+setTrackerAlertFn(notify);
 await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
 initWatcher(provider, notify);
