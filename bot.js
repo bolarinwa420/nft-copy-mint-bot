@@ -24,9 +24,7 @@ import { v4 as uuidv4 } from "uuid";
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-const provider = new ethers.JsonRpcProvider(
-  `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-);
+const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 
@@ -1569,8 +1567,7 @@ bot.command("watchsweep", async (ctx) => {
   // Seed lastBlock to current block so we don't replay history
   let startBlock = "latest";
   try {
-    const alchemy = getAlchemy();
-    const blockNum = await alchemy.core.getBlockNumber();
+    const blockNum = await provider.getBlockNumber();
     startBlock = "0x" + blockNum.toString(16);
   } catch (_) { /* fall back to "latest" */ }
 

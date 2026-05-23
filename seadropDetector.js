@@ -18,11 +18,13 @@ const MAX_SMART_ALERTS = 3; // max alerts per contract per whale
 
 let storedNotifyFn;
 
+const NAME_IFACE = new ethers.Interface(["function name() view returns (string)"]);
+const freeProvider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
+
 async function getCollectionName(contract) {
   try {
-    const alchemy = getAlchemy();
-    const meta = await alchemy.nft.getContractMetadata(contract);
-    return meta?.name || null;
+    const raw = await freeProvider.call({ to: contract, data: NAME_IFACE.encodeFunctionData("name") });
+    return NAME_IFACE.decodeFunctionResult("name", raw)[0] || null;
   } catch {
     return null;
   }
