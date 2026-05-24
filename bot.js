@@ -207,6 +207,7 @@ bot.command("start", async (ctx) => {
     `/blacklist <contract> — never auto-mint this contract\n` +
     `/unblacklist <contract> — remove from blacklist\n` +
     `/mintfilters — show whitelist/blacklist\n` +
+    `/toggleautomint — enable/disable copy-minting\n` +
     `/togglefreemints — allow/block free mints\n` +
     `/togglecatchall — fire on ANY whale contract call (catches unknown mints)\n` +
     `/profits [contract] — mint profit tracker\n` +
@@ -238,6 +239,7 @@ bot.command("commands", async (ctx) => {
 
     `*⚡ Auto-Mint Settings*\n` +
     `/setmaxmint <usd> — max price per NFT in USD\n` +
+    `/toggleautomint — enable/disable copy-minting\n` +
     `/togglefreemints — allow/block free mints\n` +
     `/togglecatchall — catch ALL whale contract calls\n\n` +
 
@@ -1039,6 +1041,19 @@ bot.command("mintfilters", async (ctx) => {
     `/whitelist 0x... — add to whitelist\n` +
     `/blacklist 0x... — add to blacklist\n` +
     `/togglefreemints — toggle free mints`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("toggleautomint", async (ctx) => {
+  const settings = getSettings();
+  await updateSettings({ autoMint: !settings.autoMint });
+  const now = !settings.autoMint;
+  await ctx.reply(
+    `${now ? "⚡" : "🔴"} *Auto-Mint: ${now ? "ENABLED" : "DISABLED"}*\n\n` +
+    (now
+      ? `Bot will now automatically copy-mint when a tracked whale mints.`
+      : `Bot will send alerts only — no automatic minting.`),
     { parse_mode: "Markdown" }
   );
 });
@@ -2455,6 +2470,7 @@ bot.start({
       { command: "tracked",         description: "List tracked wallets" },
       { command: "whalestats",      description: "Whale daily on-chain activity" },
       // Auto-mint
+      { command: "toggleautomint",  description: "Enable / disable auto copy-minting" },
       { command: "setmaxmint",      description: "Set max mint price in USD" },
       { command: "togglefreemints", description: "Allow / block free mints" },
       { command: "togglecatchall",  description: "Catch all whale contract calls" },

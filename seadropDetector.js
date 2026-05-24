@@ -1,9 +1,13 @@
 import { ethers } from "ethers";
-import { tmaEvents } from "./tracker.js";
+import { mintEvents, tmaEvents } from "./tracker.js";
 import { getSeadropAlertCount, incrementSeadropAlertCount, getTracked } from "./storage.js";
 import { getWhaleLabel } from "./whale-meta.js";
 
 const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
+const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
+const SEADROP_MINT_PUBLIC_IFACE = new ethers.Interface([
+  "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity)",
+]);
 const SEADROP_MINT_TOPIC = ethers.id(
   "SeaDropMint(address,address,address,address,uint256,uint256,uint256,uint256)"
 );
@@ -49,7 +53,8 @@ function attachListener(provider) {
         ["address", "uint256", "uint256", "uint256", "uint256"],
         log.data
       );
-      const unitMintPrice = decoded[2];
+      const quantityMinted = decoded[1];
+      const unitMintPrice  = decoded[2];
       const priceStr = unitMintPrice === 0n
         ? "FREE"
         : `${Number(ethers.formatEther(unitMintPrice)).toFixed(4)} ETH`;
@@ -71,6 +76,30 @@ function attachListener(provider) {
         null,
         "Markdown"
       );
+
+      // Emit mintDetected so copy-mint fires (deduped by txHash in copymint.js)
+      try {
+        const mintCalldata = SEADROP_MINT_PUBLIC_IFACE.encodeFunctionData("mintPublic", [
+          nftContract,
+          OPENSEA_FEE_RECIPIENT,
+          minter,
+          quantityMinted,
+        ]);
+        mintEvents.emit("mintDetected", {
+          whale: minterLow,
+          contract: nftContract,
+          tx: {
+            hash: log.transactionHash,
+            from: minterLow,
+            to:   SEADROP_ADDRESS,
+            input: mintCalldata,
+            data:  mintCalldata,
+            value: (unitMintPrice * quantityMinted).toString(),
+          },
+        });
+      } catch (emitErr) {
+        console.warn("[SeadropDetector] mintDetected emit failed:", emitErr.message);
+      }
 
     } catch (e) {
       console.error("[SeadropDetector] Error:", e.message);
