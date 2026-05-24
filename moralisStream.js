@@ -115,6 +115,16 @@ export async function initMoralisStream() {
     }
   });
 
+  // Moralis test webhook may send an empty or non-JSON body → express.json() returns 400
+  // before our route handler runs. Catch that here and ack 200 so stream creation succeeds.
+  app.use((err, req, res, next) => {
+    if (err.status === 400) {
+      console.warn("[MoralisStream] Body parse error on webhook (likely test ping) — acking 200");
+      return res.sendStatus(200);
+    }
+    next(err);
+  });
+
   const port = process.env.PORT || 3001;
   await new Promise((resolve) => {
     app.listen(port, () => {
