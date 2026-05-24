@@ -19,6 +19,7 @@ import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
+import { initBlockScanner } from "./blockScanner.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,8 @@ initNewCollectionWatcher(notify);
 initMintFloorTracker(notify);
 startWatcher();
 if (!process.env.MORALIS_API_KEY) await startTracking();
+// Block scanner runs always — catches every whale mint regardless of Moralis stream status
+initBlockScanner().catch(e => console.warn("[BlockScanner] Init failed:", e.message));
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
