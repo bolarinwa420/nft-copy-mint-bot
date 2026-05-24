@@ -26,7 +26,7 @@ import { initBlockScanner } from "./blockScanner.js";
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-const provider = new ethers.JsonRpcProvider("https://rpc.ankr.com/eth");
+const provider = new ethers.JsonRpcProvider("https://ethereum.publicnode.com");
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 
