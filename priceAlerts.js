@@ -1,7 +1,7 @@
 import { getPriceAlerts, updatePriceAlert } from "./storage.js";
 
-const POLL_INTERVAL = 5 * 60 * 1000;  // 5 min — was 2min via Alchemy NFT API (costs CUs)
-const COOLDOWN = 30 * 60 * 1000;      // re-alert max once per 30 min per contract
+const POLL_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+const COOLDOWN = 6 * 60 * 60 * 1000;      // re-alert max once per 6 hours per contract
 const RESERVOIR_BASE = "https://api.reservoir.tools";
 
 export async function getFloorPrice(contract) {
@@ -44,8 +44,8 @@ export function initPriceAlerts(notify) {
           );
           await updatePriceAlert(alert.id, { lastFiredAt: now });
         } else {
-          const minsLeft = Math.ceil((COOLDOWN - (now - alert.lastFiredAt)) / 60000);
-          console.log(`[PriceAlerts] ${alert.name} cooldown — ${minsLeft} min left`);
+          const hrsLeft = ((COOLDOWN - (now - alert.lastFiredAt)) / 3600000).toFixed(1);
+          console.log(`[PriceAlerts] ${alert.name} cooldown — ${hrsLeft}h left`);
         }
       }
     }
