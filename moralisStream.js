@@ -115,14 +115,10 @@ export async function initMoralisStream() {
     }
   });
 
-  // Moralis test webhook may send an empty or non-JSON body → express.json() returns 400
-  // before our route handler runs. Catch that here and ack 200 so stream creation succeeds.
+  // Swallow any middleware errors (e.g. JSON parse failures on Moralis test webhook) and ack 200
   app.use((err, req, res, next) => {
-    if (err.status === 400) {
-      console.warn("[MoralisStream] Body parse error on webhook (likely test ping) — acking 200");
-      return res.sendStatus(200);
-    }
-    next(err);
+    console.warn("[MoralisStream] Webhook middleware error (acking 200):", err.status, err.message);
+    return res.sendStatus(200);
   });
 
   const port = process.env.PORT || 3001;
@@ -133,7 +129,23 @@ export async function initMoralisStream() {
     });
   });
 
-  await setupStream();
+  // Railway's edge proxy takes a few seconds to start routing traffic after bind.
+  // Retry setupStream with backoff — don't crash the process if it keeps failing.
+  let delay = 5000;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      await setupStream();
+      return;
+    } catch (e) {
+      if (attempt === 6) {
+        console.error("[MoralisStream] Stream setup failed after all retries — running without stream:", e.message);
+        return;
+      }
+      console.warn(`[MoralisStream] Stream setup attempt ${attempt}/6 failed: ${e.message} — retrying in ${delay / 1000}s`);
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
 }
 
 async function setupStream() {
