@@ -151,9 +151,15 @@ export async function initMoralisStream() {
 
 async function setupStream() {
   const db = getDb();
-  streamId = db.data.moralisStreamId || null;
+  // MORALIS_STREAM_ID env var bypasses stream creation — use when C0006 blocks auto-create
+  streamId = process.env.MORALIS_STREAM_ID || db.data.moralisStreamId || null;
   const webhookUrl = `${process.env.WEBHOOK_URL}/webhook`;
   const tracked = getTracked();
+
+  if (process.env.MORALIS_STREAM_ID && !db.data.moralisStreamId) {
+    db.data.moralisStreamId = process.env.MORALIS_STREAM_ID;
+    await db.write();
+  }
 
   if (!streamId) {
     console.log(`[MoralisStream] Creating new stream → ${webhookUrl}`);
@@ -168,8 +174,10 @@ async function setupStream() {
     db.data.moralisStreamId = streamId;
     await db.write();
     console.log(`[MoralisStream] Stream created: ${streamId}`);
+  } else if (process.env.MORALIS_STREAM_ID) {
+    console.log(`[MoralisStream] Using pre-set stream from env: ${streamId}`);
   } else {
-    console.log(`[MoralisStream] Reusing stream: ${streamId}`);
+    console.log(`[MoralisStream] Reusing stream from db: ${streamId}`);
   }
 
   // Add tracked addresses + TMA wallet in batches of 50 (Moralis limit per call)
