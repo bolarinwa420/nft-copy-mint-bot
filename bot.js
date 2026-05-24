@@ -109,7 +109,7 @@ initSeadropDetector(notify);
 initNewCollectionWatcher(notify);
 initMintFloorTracker(notify);
 startWatcher();
-await startTracking();
+if (!process.env.MORALIS_API_KEY) await startTracking();
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ function formatStatusMessage() {
     `Whitelist: ${wl.length > 0 ? `${wl.length} contract(s)` : "All"}\n` +
     `Blacklist: ${bl.length > 0 ? `${bl.length} blocked` : "None"}\n\n` +
     `*Network:*\n` +
-    `Active Node: eth-mainnet.g.alchemy.com\n` +
+    `Tracker Mode: ${process.env.MORALIS_API_KEY ? "Moralis Streams (webhook)" : "Alchemy WebSocket"}\n` +
     `Alert Chat: ${settings.alertChatId || process.env.ALERT_CHAT_ID || "not set"}\n` +
     `Total Wallets: ${wallets.length}\n` +
     `Tracked Addresses: ${tracked.length}\n` +
@@ -381,6 +381,7 @@ bot.command("restarttracker", async (ctx) => {
 
 async function fetchWhaleActivity(address, dateStr) {
   const alchemy = getAlchemy();
+  if (!alchemy) throw new Error("Whale activity stats require Alchemy — not available in Moralis mode.");
 
   // Build start/end timestamps for the requested date (UTC)
   const start = new Date(`${dateStr}T00:00:00Z`);
