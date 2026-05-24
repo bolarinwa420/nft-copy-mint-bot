@@ -58,22 +58,23 @@ export async function initMoralisStream() {
   }));
 
   app.post("/webhook", (req, res) => {
-    // Verify Moralis signature
+    // Always ack immediately — Moralis requires 200 (including on test webhook during stream creation)
+    res.sendStatus(200);
+
+    // Verify signature before processing — drop silently if invalid
     try {
       const isValid = Moralis.Streams.verifySignature({
         body: req.rawBody,
         signature: req.headers["x-signature"],
       });
       if (!isValid) {
-        console.warn("[MoralisStream] Invalid webhook signature — rejected");
-        return res.status(401).send("Unauthorized");
+        console.warn("[MoralisStream] Invalid webhook signature — dropped");
+        return;
       }
     } catch (e) {
       console.warn("[MoralisStream] Signature error:", e.message);
-      return res.status(401).send("Unauthorized");
+      return;
     }
-
-    res.sendStatus(200); // ack fast, process async
 
     const { txs, confirmed } = req.body;
 
@@ -115,7 +116,12 @@ export async function initMoralisStream() {
   });
 
   const port = process.env.PORT || 3001;
-  app.listen(port, () => console.log(`[MoralisStream] Webhook listening on :${port}`));
+  await new Promise((resolve) => {
+    app.listen(port, () => {
+      console.log(`[MoralisStream] Webhook listening on :${port}`);
+      resolve();
+    });
+  });
 
   await setupStream();
 }
