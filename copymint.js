@@ -77,6 +77,36 @@ function getNftContract(to, data) {
   return to;
 }
 
+const ERC721_ID  = "0x80ac58cd";
+const ERC1155_ID = "0xd9b67a26";
+const SUPPORTS_IFACE = new ethers.Interface([
+  "function supportsInterface(bytes4 interfaceId) view returns (bool)",
+]);
+const nftCheckCache = new Map();
+
+async function isLikelyNFTContract(address) {
+  const addr = address.toLowerCase();
+  if (nftCheckCache.has(addr)) return nftCheckCache.get(addr);
+  try {
+    const code = await provider.getCode(address);
+    if (!code || code === "0x") { nftCheckCache.set(addr, false); return false; }
+    for (const id of [ERC721_ID, ERC1155_ID]) {
+      try {
+        const raw = await provider.call({
+          to: address,
+          data: SUPPORTS_IFACE.encodeFunctionData("supportsInterface", [id]),
+        });
+        if (raw && raw !== "0x") {
+          const [ok] = SUPPORTS_IFACE.decodeFunctionResult("supportsInterface", raw);
+          if (ok) { nftCheckCache.set(addr, true); return true; }
+        }
+      } catch {}
+    }
+  } catch {}
+  nftCheckCache.set(addr, false);
+  return false;
+}
+
 const collectionNameCache = new Map();
 async function getCollectionName(contractAddress) {
   if (!contractAddress) return null;
@@ -309,6 +339,25 @@ async function handleMintDetected({ whale, contract, tx }) {
       `Guaranteed/allowlist drop. The signature is tied to the whale's wallet and cannot be copied.`
     );
     return;
+  }
+
+  // Drainer check — verify the NFT contract is a real ERC721/ERC1155.
+  // Whitelisted contracts bypass this (user has explicitly trusted them).
+  const nftAddr = getNftContract(contractLower, rawData);
+  const isWhitelisted = whitelist.length > 0 && whitelist.includes(contractLower);
+  if (!isWhitelisted) {
+    const safe = await isLikelyNFTContract(nftAddr);
+    if (!safe) {
+      console.warn(`[Safety] ${nftAddr} failed ERC721/ERC1155 check — possible drainer, skipped`);
+      await telegramNotify(
+        `⛔ *Safety Skip*\n\n` +
+        `\`${nftAddr}\` is not a verified ERC721/ERC1155 contract.\n` +
+        `Possible drainer — skipped.\n\n` +
+        `To override: /whitelist \`${nftAddr}\``,
+        null, "Markdown"
+      );
+      return;
+    }
   }
 
   await Promise.all([
