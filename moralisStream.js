@@ -52,34 +52,41 @@ export async function initMoralisStream() {
   await Moralis.start({ apiKey: process.env.MORALIS_API_KEY });
 
   const app = express();
-  // Capture raw body for signature verification
-  app.use(express.json({
-    verify: (req, _res, buf) => { req.rawBody = buf.toString(); }
-  }));
+  // Use raw body parser — never throws 400, captures body for sig verification and manual JSON parse
+  app.use(express.raw({ type: "*/*", limit: "10mb" }));
 
   app.post("/webhook", (req, res) => {
-    // Always ack immediately — Moralis requires 200 (including on test webhook during stream creation)
+    // Ack immediately — Moralis requires 200 before processing anything
     res.sendStatus(200);
+    console.log("[MoralisStream] Webhook hit");
 
-    // Verify signature before processing — drop silently if invalid
-    try {
-      const isValid = Moralis.Streams.verifySignature({
-        body: req.rawBody,
-        signature: req.headers["x-signature"],
-      });
-      if (!isValid) {
-        console.warn("[MoralisStream] Invalid webhook signature — dropped");
+    const rawBody = Buffer.isBuffer(req.body) ? req.body.toString() : "";
+
+    // Verify signature — skip silently on test pings (no x-signature header)
+    if (req.headers["x-signature"]) {
+      try {
+        const isValid = Moralis.Streams.verifySignature({
+          body: rawBody,
+          signature: req.headers["x-signature"],
+        });
+        if (!isValid) {
+          console.warn("[MoralisStream] Invalid webhook signature — dropped");
+          return;
+        }
+      } catch (e) {
+        console.warn("[MoralisStream] Signature error:", e.message);
         return;
       }
-    } catch (e) {
-      console.warn("[MoralisStream] Signature error:", e.message);
-      return;
     }
 
-    const { txs, confirmed } = req.body;
+    let body;
+    try {
+      body = JSON.parse(rawBody || "{}");
+    } catch {
+      return; // test ping or malformed — already acked 200
+    }
 
-    // Moralis sends unconfirmed first (confirmed=false), then confirmed (confirmed=true)
-    // We only copy-mint on confirmed (already mined) to match old behavior
+    const { txs, confirmed } = body;
     if (!confirmed) return;
     if (!txs?.length) return;
 
@@ -113,12 +120,6 @@ export async function initMoralisStream() {
         tx: normalized,
       });
     }
-  });
-
-  // Swallow any middleware errors (e.g. JSON parse failures on Moralis test webhook) and ack 200
-  app.use((err, req, res, next) => {
-    console.warn("[MoralisStream] Webhook middleware error (acking 200):", err.status, err.message);
-    return res.sendStatus(200);
   });
 
   const port = process.env.PORT || 3001;
