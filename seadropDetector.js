@@ -18,7 +18,7 @@ let lastLogAt = Date.now();
 let watchdogTimer = null;
 
 const NAME_IFACE = new ethers.Interface(["function name() view returns (string)"]);
-const freeProvider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
+const freeProvider = new ethers.JsonRpcProvider("https://rpc.ankr.com/eth");
 
 async function getCollectionName(contract) {
   try {

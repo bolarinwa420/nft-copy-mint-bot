@@ -25,7 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
+const provider = new ethers.JsonRpcProvider("https://rpc.ankr.com/eth");
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 
