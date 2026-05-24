@@ -5,6 +5,7 @@ import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSetti
 import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState, setTrackerAlertFn } from "./tracker.js";
+import { initMoralisStream, addToMoralisStream, removeFromMoralisStream } from "./moralisStream.js";
 import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
@@ -89,8 +90,14 @@ for (const addr of WHALE_SEED) {
 if (seeded > 0) console.log(`[Seed] Added ${seeded} new whale wallet(s) to tracked list`);
 
 // Init subsystems
-initTracker(process.env.ALCHEMY_API_KEY);
-setTrackerAlertFn(notify);
+if (process.env.MORALIS_API_KEY) {
+  console.log("[Bot] MORALIS_API_KEY found — using Moralis Streams tracker");
+  await initMoralisStream();
+} else {
+  initTracker(process.env.ALCHEMY_API_KEY);
+  setTrackerAlertFn(notify);
+  await startTracking();
+}
 await initCopyMint(provider, mainSigner, notify, askApproval);
 initScheduler(notify);
 initWatcher(provider, notify);
@@ -310,7 +317,11 @@ bot.command("track", async (ctx) => {
     return ctx.reply("Usage: /track 0xAddress");
   }
   await addTracked(address);
-  await restartTracking();
+  if (process.env.MORALIS_API_KEY) {
+    await addToMoralisStream(address.toLowerCase());
+  } else {
+    await restartTracking();
+  }
   await ctx.reply(`🐋 Tracking \`${shortAddr(address)}\``, { parse_mode: "Markdown" });
 });
 
@@ -320,7 +331,11 @@ bot.command("untrack", async (ctx) => {
     return ctx.reply("Usage: /untrack 0xAddress");
   }
   await removeTracked(address);
-  await restartTracking();
+  if (process.env.MORALIS_API_KEY) {
+    await removeFromMoralisStream(address.toLowerCase());
+  } else {
+    await restartTracking();
+  }
   await ctx.reply(`❌ Removed \`${shortAddr(address)}\``, { parse_mode: "Markdown" });
 });
 

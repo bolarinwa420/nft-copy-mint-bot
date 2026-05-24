@@ -7,12 +7,14 @@
     "start": "node bot.js"
   },
   "dependencies": {
-    "grammy": "^1.31.0",
-    "ethers": "^6.13.0",
-    "alchemy-sdk": "^3.5.0",
     "@flashbots/ethers-provider-bundle": "^1.0.0",
-    "lowdb": "^7.0.1",
+    "alchemy-sdk": "^3.5.0",
     "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "express": "^5.2.1",
+    "grammy": "^1.31.0",
+    "lowdb": "^7.0.1",
+    "moralis": "^2.27.2",
     "uuid": "^9.0.1"
   }
 }
