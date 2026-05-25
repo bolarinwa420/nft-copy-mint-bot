@@ -164,6 +164,82 @@ async function checkMaxPerWallet(contractAddress) {
   return limit;
 }
 
+// ── Token-ID Collision Handling ───────────────────────────────────────────
+
+const TOKEN_COLLISION_PATTERNS = [
+  /already.?minted/i,
+  /token.?already.?minted/i,
+  /token.?exists/i,
+  /already.?claimed/i,
+  /already.?taken/i,
+  /alreadyminted/i,
+  /tokenalreadyminted/i,
+  /tokenexists/i,
+  /alreadyclaimed/i,
+];
+
+function isTokenCollisionRevert(msg) {
+  if (!msg) return false;
+  return TOKEN_COLLISION_PATTERNS.some((p) => p.test(msg));
+}
+
+// Decode first uint256 arg from calldata (after 4-byte selector)
+function decodeTokenIdFromCalldata(data) {
+  if (!data || data.length < 74) return null;
+  try {
+    return BigInt("0x" + data.slice(10, 74));
+  } catch { return null; }
+}
+
+// Replace first uint256 param in calldata with newId
+function reencodeWithTokenId(data, newId) {
+  if (!data || data.length < 74) return data;
+  return data.slice(0, 10) + newId.toString(16).padStart(64, "0") + data.slice(74);
+}
+
+const OWNER_OF_IFACE = new ethers.Interface([
+  "function ownerOf(uint256 tokenId) view returns (address)",
+]);
+
+// ownerOf revert = unclaimed token (ERC721 standard)
+async function isTokenFree(contractAddress, tokenId) {
+  try {
+    await provider.call({
+      to: contractAddress,
+      data: OWNER_OF_IFACE.encodeFunctionData("ownerOf", [tokenId]),
+    });
+    return false; // success = token is owned
+  } catch {
+    return true; // revert = doesn't exist = free
+  }
+}
+
+// Scan in batches of 10 to find `count` unclaimed token IDs starting from startId
+async function findFreeTokenIds(contractAddress, startId, count = 1, maxScan = 300) {
+  const freeIds = [];
+  const BATCH = 10;
+  let cursor = startId;
+  const limit = startId + BigInt(maxScan);
+
+  while (freeIds.length < count && cursor < limit) {
+    const batchIds = [];
+    for (let i = 0; i < BATCH && cursor + BigInt(i) < limit; i++) {
+      batchIds.push(cursor + BigInt(i));
+    }
+    cursor += BigInt(batchIds.length);
+
+    const checks = await Promise.all(batchIds.map((id) => isTokenFree(contractAddress, id)));
+    for (let i = 0; i < batchIds.length; i++) {
+      if (checks[i]) {
+        freeIds.push(batchIds[i]);
+        if (freeIds.length >= count) break;
+      }
+    }
+  }
+
+  return freeIds;
+}
+
 async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = null) {
   const data = rawData || "0x";
   const value = BigInt(txValue || 0);
@@ -420,11 +496,44 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     await provider.call({ ...mintTx, from: await mainSigner.getAddress() });
   } catch (simErr) {
     const reason = simErr.reason || simErr.message?.slice(0, 120) || "unknown revert";
-    await telegramNotify(
-      `⚠️ *Mint Simulation Failed — Skipped*\n\n` +
-      `The tx would revert on-chain. Reason:\n\`${reason}\``
-    );
-    return;
+
+    // Token ID collision? Scan for a free slot and retry
+    if (isTokenCollisionRevert(reason)) {
+      const nftAddr = getNftContract(mintTx.to, mintTx.data);
+      const collidedId = decodeTokenIdFromCalldata(mintTx.data);
+      if (collidedId !== null) {
+        await telegramNotify(
+          `🔍 *Token ID #${collidedId} already minted*\nScanning for a free slot...`
+        );
+        const [freeId] = await findFreeTokenIds(nftAddr, collidedId + 1n, 1);
+        if (freeId !== undefined) {
+          mintTx.data = reencodeWithTokenId(mintTx.data, freeId);
+          try {
+            await provider.call({ ...mintTx, from: await mainSigner.getAddress() });
+            await telegramNotify(`✅ Free token ID #${freeId} found — minting...`);
+          } catch (retryErr) {
+            const retryReason = retryErr.reason || retryErr.message?.slice(0, 120) || "unknown revert";
+            await telegramNotify(
+              `⚠️ *Simulation Failed After ID Scan*\n\nReason: \`${retryReason}\``
+            );
+            return;
+          }
+        } else {
+          await telegramNotify(`⚠️ *No Free Token IDs Found* — could not locate an unclaimed slot. Skipping.`);
+          return;
+        }
+      } else {
+        await telegramNotify(
+          `⚠️ *Mint Simulation Failed — Skipped*\n\nThe tx would revert on-chain. Reason:\n\`${reason}\``
+        );
+        return;
+      }
+    } else {
+      await telegramNotify(
+        `⚠️ *Mint Simulation Failed — Skipped*\n\nThe tx would revert on-chain. Reason:\n\`${reason}\``
+      );
+      return;
+    }
   }
 
   try {
@@ -555,7 +664,7 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
   }
 
   const fixedSubData = fixSeaDropCalldata(whaleTx.to, adjSubData);
-  const mintTx = {
+  const baseMintTx = {
     to: whaleTx.to,
     data: fixedSubData,
     value: txValue,
@@ -567,12 +676,48 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     maxPriorityFeePerGas,
   };
 
-  const subNftContract = getNftContract(mintTx.to, mintTx.data);
+  const subNftContract = getNftContract(baseMintTx.to, baseMintTx.data);
+
+  // Test simulation on first wallet to detect token ID collision
+  // walletDataMap: null = all wallets use same calldata; Map = per-wallet calldata
+  let walletDataMap = null;
+  let effectiveFunded = funded;
+  try {
+    await provider.call({ ...baseMintTx, from: funded[0].address });
+  } catch (simErr) {
+    const reason = simErr.reason || simErr.message?.slice(0, 120) || "";
+    if (isTokenCollisionRevert(reason)) {
+      const collidedId = decodeTokenIdFromCalldata(baseMintTx.data);
+      if (collidedId !== null) {
+        await telegramNotify(
+          `🔍 *Sub-Wallets: Token ID Collision*\nScanning for ${funded.length} free token IDs...`
+        );
+        const freeIds = await findFreeTokenIds(subNftContract, collidedId + 1n, funded.length);
+        if (freeIds.length === 0) {
+          await telegramNotify(`⚠️ *No Free Token IDs Found* — sub-wallets skipped.`);
+          return;
+        }
+        if (freeIds.length < funded.length) {
+          await telegramNotify(
+            `⚠️ Only ${freeIds.length}/${funded.length} free IDs found — ${funded.length - freeIds.length} wallets will be skipped.`
+          );
+        }
+        walletDataMap = new Map();
+        effectiveFunded = funded.slice(0, freeIds.length);
+        for (let i = 0; i < freeIds.length; i++) {
+          walletDataMap.set(funded[i].address, reencodeWithTokenId(baseMintTx.data, freeIds[i]));
+        }
+      }
+    }
+    // Non-collision revert: fire anyway — on-chain result determines outcome
+  }
+
   const subCollectionName = await getCollectionName(subNftContract);
 
   const results = await Promise.allSettled(
-    funded.map(async (signer) => {
-      const tx = await signer.sendTransaction(mintTx);
+    effectiveFunded.map(async (signer) => {
+      const walletData = walletDataMap ? walletDataMap.get(signer.address) : baseMintTx.data;
+      const tx = await signer.sendTransaction({ ...baseMintTx, data: walletData });
       await logMint({
         contract: subNftContract.toLowerCase(),
         wallet: signer.address.toLowerCase(),
