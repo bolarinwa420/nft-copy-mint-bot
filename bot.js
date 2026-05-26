@@ -20,6 +20,7 @@ import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSigna
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
+import { initDaemonSniper, runDaemonSnipe, runDaemonWrap, detectPool, detectTax, detectWrapFunction, addSnipeWallet, removeSnipeWallet, clearSnipeWallets, getSnipeWalletAddresses } from "./daemonSniper.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,7 @@ initSalesWatcher(notify);
 initSeadropDetector(notify);
 initNewCollectionWatcher(notify);
 initMintFloorTracker(notify);
+initDaemonSniper(provider, mainSigner);
 startWatcher();
 if (!process.env.MORALIS_API_KEY) await startTracking();
 // Block scanner runs always — catches every whale mint regardless of Moralis stream status
@@ -2284,6 +2286,175 @@ bot.command("list", async (ctx) => {
   }
 });
 
+// ─── DAEMON Sniper ────────────────────────────────────────────────────────────
+
+// /daemonadd <address> — register a wallet for the snipe
+bot.command("daemonadd", async (ctx) => {
+  const address = ctx.match?.trim();
+  if (!address || !isValidAddress(address)) {
+    return ctx.reply("Usage: `/daemonadd 0xAddress`\n\nThe wallet must already be added to the bot as a sub-wallet.", { parse_mode: "Markdown" });
+  }
+  addSnipeWallet(address);
+  const all = getSnipeWalletAddresses();
+  await ctx.reply(
+    `✅ Added \`${address}\` to DAEMON snipe list.\n\nTotal registered: *${all.length}*\n\nUse /daemonlist to view all.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// /daemonremove <address> — remove a wallet from the snipe list
+bot.command("daemonremove", async (ctx) => {
+  const address = ctx.match?.trim();
+  if (!address || !isValidAddress(address)) {
+    return ctx.reply("Usage: `/daemonremove 0xAddress`", { parse_mode: "Markdown" });
+  }
+  removeSnipeWallet(address);
+  await ctx.reply(`🗑 Removed \`${address}\` from snipe list.`, { parse_mode: "Markdown" });
+});
+
+// /daemonclear — wipe the whole snipe wallet list
+bot.command("daemonclear", async (ctx) => {
+  clearSnipeWallets();
+  await ctx.reply("🗑 Snipe wallet list cleared.");
+});
+
+// /daemonlist — show registered wallets with balances
+bot.command("daemonlist", async (ctx) => {
+  const addrs = getSnipeWalletAddresses();
+  if (addrs.length === 0) {
+    return ctx.reply("No wallets registered yet.\n\nUse `/daemonadd 0xAddress` to add one.", { parse_mode: "Markdown" });
+  }
+
+  await ctx.reply(`🔍 Fetching balances for ${addrs.length} wallet(s)...`);
+
+  const balances = await Promise.all(
+    addrs.map(async (addr) => {
+      try {
+        const bal = await provider.getBalance(addr);
+        const eth = parseFloat(ethers.formatEther(bal));
+        const spend = eth * 0.5;
+        return { addr, eth, spend };
+      } catch {
+        return { addr, eth: 0, spend: 0 };
+      }
+    })
+  );
+
+  const totalSpend = balances.reduce((s, w) => s + w.spend, 0);
+  const lines = balances.map((w, i) =>
+    `${i + 1}. \`${w.addr}\`\n    Balance: ${w.eth.toFixed(4)} ETH → will spend: *${w.spend.toFixed(4)} ETH* (50%)`
+  );
+
+  await ctx.reply(
+    `💼 *DAEMON Snipe Wallets (${addrs.length})*\n\n` +
+    lines.join("\n\n") + "\n\n" +
+    `─────────────────\n` +
+    `Total to spend at launch: *~${totalSpend.toFixed(4)} ETH*`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// /daemonsnipe <CA> — dry run then execute
+bot.command("daemonsnipe", async (ctx) => {
+  const tokenCA = ctx.match?.trim();
+
+  if (!tokenCA || !isValidAddress(tokenCA)) {
+    return ctx.reply(
+      `*DAEMON Sniper*\n\n` +
+      `Runs a dry run first \\(shows tax, slippage, per\\-wallet expected amounts\\), then buys 50% of each registered wallet's balance and wraps artifacts as ERC721\\.\n\n` +
+      `Setup:\n` +
+      `1\\. \`/daemonadd 0xAddress\` — register participating wallets\n` +
+      `2\\. \`/daemonlist\` — verify balances\n` +
+      `3\\. \`/daemonsnipe <CA>\` — fire when CA drops\n\n` +
+      `\`/daemonclear\` to reset the wallet list\\.`,
+      { parse_mode: "MarkdownV2" }
+    );
+  }
+
+  const registered = getSnipeWalletAddresses();
+  if (registered.length === 0) {
+    return ctx.reply(
+      `❌ No wallets registered.\n\nAdd wallets first:\n\`/daemonadd 0xAddress\``,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  runDaemonSnipe({ tokenCA, notify }).catch(err => {
+    notify(`❌ *Snipe Error*\n\n${err.message}`);
+  });
+
+  await ctx.reply(
+    `🎯 *DAEMON Snipe triggered!*\n\n` +
+    `CA: \`${tokenCA}\`\n` +
+    `Wallets: ${registered.length}\n` +
+    `Spend: *50%* of each wallet's balance\n\n` +
+    `_Dry run first → then buying → then wrapping..._`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("daemonwrap", async (ctx) => {
+  const args = (ctx.match?.trim() || "").split(/\s+/).filter(Boolean);
+
+  if (args.length === 0 || !isValidAddress(args[0])) {
+    return ctx.reply(
+      `*DAEMON Wrap*\n\n` +
+      `Wraps artifacts as ERC721 on all wallets\\.\n\n` +
+      `Usage:\n` +
+      `\`/daemonwrap <CA>\` — auto\\-detect wrap fn\n` +
+      `\`/daemonwrap <CA> 0xCALLDATA\` — provide selector manually`,
+      { parse_mode: "MarkdownV2" }
+    );
+  }
+
+  const tokenCA = args[0];
+  const calldataArg = args.find(a => /^0x[0-9a-fA-F]{8,}$/.test(a) && a !== tokenCA) || null;
+
+  runDaemonWrap({ tokenCA, calldata: calldataArg, notify }).catch(err => {
+    notify(`❌ *Wrap Error*\n\n${err.message}`);
+  });
+
+  await ctx.reply(
+    `🧊 Wrapping DAEMON artifacts on all wallets...\n\nCA: \`${tokenCA}\``,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("daemoncheck", async (ctx) => {
+  const ca = ctx.match?.trim();
+  if (!ca || !isValidAddress(ca)) {
+    return ctx.reply("Usage: `/daemoncheck <CA>`\n\nChecks pool type, fee, hooks address, tax rate, and wrap function.", { parse_mode: "Markdown" });
+  }
+
+  await ctx.reply(`🔍 Checking DAEMON setup for \`${ca}\`...`, { parse_mode: "Markdown" });
+
+  const [pool, wrapFn] = await Promise.all([
+    detectPool(ca),
+    detectWrapFunction(ca).catch(() => null),
+  ]);
+
+  if (!pool) {
+    return ctx.reply(`❌ No pool found yet (V3 or V4). CA may not have launched.`);
+  }
+
+  let taxInfo = "N/A (V4 pool)";
+  if (pool.type === "v3") {
+    const { tax, error } = await detectTax(ca, 0.1, pool.fee);
+    taxInfo = tax !== null ? `${tax.toFixed(1)}%` : `Unknown (${error})`;
+  }
+
+  await ctx.reply(
+    `📊 *DAEMON Pre-Launch Check*\n\n` +
+    `Pool: *${pool.type.toUpperCase()}*\n` +
+    `Fee: ${pool.fee / 10000}%\n` +
+    (pool.type === "v4" ? `Hooks: \`${pool.hooks}\`\n` : "") +
+    `Transfer Tax: ${taxInfo}\n\n` +
+    `Wrap Function: ${wrapFn ? `\`${wrapFn.sig}\` (${wrapFn.source})` : "Not found yet"}\n\n` +
+    `${pool && wrapFn ? "✅ Ready to snipe!" : "⏳ Waiting for contract verification to find wrap fn."}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
 // ─── Text handler (schedule flow + fallback) ─────────────────────────────────
 
 bot.on("message:text", async (ctx) => {
@@ -2517,6 +2688,14 @@ bot.start({
       { command: "watch",           description: "Watch a SeaDrop contract for drop" },
       { command: "watches",         description: "List active drop watchers" },
       { command: "unwatch",         description: "Remove a drop watcher" },
+      // DAEMON Sniper
+      { command: "daemonadd",       description: "Register a wallet for the DAEMON snipe" },
+      { command: "daemonremove",    description: "Remove a wallet from the snipe list" },
+      { command: "daemonlist",      description: "Show registered wallets + 50% spend preview" },
+      { command: "daemonclear",     description: "Clear the DAEMON snipe wallet list" },
+      { command: "daemonsnipe",     description: "Dry run + snipe DAEMON at launch + wrap as ERC721" },
+      { command: "daemonwrap",      description: "Manually wrap DAEMON artifacts as ERC721" },
+      { command: "daemoncheck",     description: "Pre-launch check: pool type, tax rate, wrap fn" },
       // Settings
       { command: "setalertchat",    description: "Set this chat as the alert channel" },
       // Sweep watcher
