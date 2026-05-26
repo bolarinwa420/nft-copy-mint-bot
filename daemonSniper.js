@@ -267,24 +267,24 @@ async function buyV3(tokenCA, walletAmounts, slippagePct, fee) {
         amountOutMin = (expected * (10000n - slippageBps)) / 10000n;
       } catch {}
 
-      const tx = await router.connect(signer).exactInputSingle(
-        {
-          tokenIn: WETH,
-          tokenOut: tokenCA,
-          fee,
-          recipient: signer.address,
-          deadline,
-          amountIn: buyAmount,
-          amountOutMinimum: amountOutMin,
-          sqrtPriceLimitX96: 0n,
-        },
-        {
-          value: buyAmount,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
-          gasLimit: 400000n,
-        }
-      );
+      const swapParams = {
+        tokenIn: WETH,
+        tokenOut: tokenCA,
+        fee,
+        recipient: signer.address,
+        deadline,
+        amountIn: buyAmount,
+        amountOutMinimum: amountOutMin,
+        sqrtPriceLimitX96: 0n,
+      };
+      const txOpts = { value: buyAmount, maxFeePerGas, maxPriorityFeePerGas };
+      try {
+        const est = await router.connect(signer).exactInputSingle.estimateGas(swapParams, txOpts);
+        txOpts.gasLimit = (est * 120n) / 100n; // +20% buffer
+      } catch {
+        txOpts.gasLimit = 250000n; // V3 swap fallback
+      }
+      const tx = await router.connect(signer).exactInputSingle(swapParams, txOpts);
       return { hash: tx.hash, address: signer.address, ethSpent: parseFloat(ethers.formatEther(buyAmount)) };
     })
   );
@@ -359,14 +359,15 @@ async function buyV4(poolKey, walletAmounts, slippagePct) {
 
   return Promise.allSettled(
     walletAmounts.map(async ({ signer, buyAmount }) => {
-      // amountOutMin = 0 for V4 (no V4 quoter available pre-launch; slippage absorbed by tax detection)
       const { commands, inputs } = encodeV4Swap(poolKey, buyAmount, 0n);
-      const tx = await router.connect(signer).execute(commands, inputs, deadline, {
-        value: buyAmount,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
-        gasLimit: 500000n,
-      });
+      const txOpts = { value: buyAmount, maxFeePerGas, maxPriorityFeePerGas };
+      try {
+        const est = await router.connect(signer).execute.estimateGas(commands, inputs, deadline, txOpts);
+        txOpts.gasLimit = (est * 120n) / 100n; // +20% buffer
+      } catch {
+        txOpts.gasLimit = 350000n; // V4 swap fallback (V4 is pricier than V3)
+      }
+      const tx = await router.connect(signer).execute(commands, inputs, deadline, txOpts);
       return { hash: tx.hash, address: signer.address, ethSpent: parseFloat(ethers.formatEther(buyAmount)) };
     })
   );
@@ -440,14 +441,14 @@ async function wrapArtifacts(contractCA, calldata, signers) {
         }
       }
 
-      const tx = await signer.sendTransaction({
-        to: contractCA,
-        data: calldata,
-        gasLimit: 300000n,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
-        type: 2,
-      });
+      const txOpts = { to: contractCA, data: calldata, maxFeePerGas, maxPriorityFeePerGas, type: 2 };
+      try {
+        const est = await signer.estimateGas(txOpts);
+        txOpts.gasLimit = (est * 120n) / 100n;
+      } catch {
+        txOpts.gasLimit = 150000n; // wrap fallback
+      }
+      const tx = await signer.sendTransaction(txOpts);
       return { hash: tx.hash, address: signer.address };
     })
   );
