@@ -66,7 +66,7 @@ const BALANCE_PCT       = 50;    // always use 50% of each wallet's balance
 const TAX_SLIPPAGE_PAD  = 5;    // add 5% on top of detected tax as buffer
 const FALLBACK_SLIPPAGE = 30;   // used when tax simulation fails
 const WRAP_WAIT_MS      = 45000; // 45s (~3–4 blocks) before wrapping
-const GAS_RESERVE_ETH   = 0.015; // ETH kept back per wallet for gas
+const MIN_BALANCE_ETH   = 0.001; // skip wallet if basically empty
 
 const DAEMON_WALLETS_FILE = path.join(__dirname, "daemon-wallets.json");
 
@@ -467,7 +467,7 @@ async function checkBalance(tokenCA, address) {
 
 // ─── Wallet Resolution ────────────────────────────────────────────────────────
 // Returns [{ signer, buyAmount, balanceEth }] for each pre-registered wallet.
-// buyAmount = 50% of (balance − gas reserve).
+// buyAmount = 50% of balance; remaining 50% covers gas.
 
 async function resolveSnipeWallets() {
   if (snipeAddresses.size === 0) return [];
@@ -475,7 +475,7 @@ async function resolveSnipeWallets() {
   // Get all signers the bot controls (main + sub-wallets)
   const allSigners = [mainSigner, ...getAllSigners(provider)];
   const signerMap  = new Map(allSigners.map(s => [s.address.toLowerCase(), s]));
-  const gasReserve = ethers.parseEther(GAS_RESERVE_ETH.toString());
+  const minBalance = ethers.parseEther(MIN_BALANCE_ETH.toString());
 
   const results = await Promise.all(
     [...snipeAddresses].map(async (addr) => {
@@ -486,9 +486,8 @@ async function resolveSnipeWallets() {
       }
       try {
         const bal = await provider.getBalance(signer.address);
-        if (bal <= gasReserve) return null; // nothing above gas
-        const spendable  = bal - gasReserve;
-        const buyAmount  = (spendable * 5000n) / 10000n; // exactly 50%
+        if (bal <= minBalance) return null;
+        const buyAmount = (bal * 5000n) / 10000n; // exactly 50%, other 50% covers gas
         if (buyAmount === 0n) return null;
         return {
           signer,
@@ -608,7 +607,7 @@ export async function runDaemonSnipe({ tokenCA, notify }) {
   if (walletAmounts.length === 0) {
     await notify(
       `❌ *No funded wallets*\n\n` +
-      `All registered wallets are below the gas reserve (${GAS_RESERVE_ETH} ETH).\n` +
+      `All registered wallets have negligible balance.\n` +
       `Top them up first.`
     );
     return { aborted: true, reason: "no_funded_wallets" };
