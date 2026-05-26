@@ -4,7 +4,11 @@
 
 import { ethers } from "ethers";
 import fs from "fs";
+import { fileURLToPath } from "url";
+import path from "path";
 import { getAllSigners } from "./wallets.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -64,7 +68,7 @@ const FALLBACK_SLIPPAGE = 30;   // used when tax simulation fails
 const WRAP_WAIT_MS      = 45000; // 45s (~3–4 blocks) before wrapping
 const GAS_RESERVE_ETH   = 0.015; // ETH kept back per wallet for gas
 
-const DAEMON_WALLETS_FILE = "./daemon-wallets.json";
+const DAEMON_WALLETS_FILE = path.join(__dirname, "daemon-wallets.json");
 
 // ─── Snipe Wallet List ────────────────────────────────────────────────────────
 // Stores the addresses pre-registered by the user for this snipe.
