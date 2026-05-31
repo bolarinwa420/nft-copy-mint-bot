@@ -6,7 +6,7 @@ import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAle
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState, setTrackerAlertFn } from "./tracker.js";
 import { initMoralisStream, addToMoralisStream, removeFromMoralisStream } from "./moralisStream.js";
-import { initCopyMint, resolveApproval, executeManualMint } from "./copymint.js";
+import { initCopyMint, resolveApproval, executeManualMint, executePerWalletMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
 import { initSweepWatcher } from "./sweepWatcher.js";
@@ -17,6 +17,7 @@ import { initNewCollectionWatcher } from "./newCollectionWatcher.js";
 import { initMintFloorTracker } from "./mintFloorTracker.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
+import { analyzeLink, classifyMintType, findAvailableTokenIds } from "./linkAnalyzer.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
@@ -1312,6 +1313,239 @@ bot.command("mintca", async (ctx) => {
     await ctx.reply(`❌ Mint failed: ${err.message}`);
   }
 });
+
+// ─── Analyze Link & Auto-Mint ─────────────────────────────────────────────────
+
+// Pending link-mint state: uuid → { contract, selector, sig, mintFn, priceEth, mintType, qty, group, tokenIds }
+const pendingLinkMints = new Map();
+
+bot.command("analyzelink", async (ctx) => {
+  const input = (ctx.match?.trim() || "");
+  if (!input) {
+    return ctx.reply(
+      `*Analyze Link & Mint*\n\n` +
+      `Paste any NFT mint page URL. The bot will find the contract, decode the mint format, and fire across your wallets.\n\n` +
+      `Usage: \`/analyzelink <url> [group] [qty]\`\n\n` +
+      `Examples:\n` +
+      `\`/analyzelink https://mint.example.xyz\`\n` +
+      `\`/analyzelink https://mint.example.xyz mine 2\``,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  const parts = input.split(/\s+/);
+  const url = parts[0];
+  let group = null, qty = 1;
+  for (const p of parts.slice(1)) {
+    if (/^\d+$/.test(p)) qty = Math.max(1, parseInt(p));
+    else group = p;
+  }
+
+  if (!/^https?:\/\/.+/.test(url)) {
+    return ctx.reply("❌ Provide a valid URL starting with http:// or https://");
+  }
+
+  const statusMsg = await ctx.reply(`🔍 Fetching \`${url}\`...`, { parse_mode: "Markdown" });
+
+  let analysis;
+  try {
+    analysis = await analyzeLink(url, provider, process.env.ETHERSCAN_API_KEY);
+  } catch (err) {
+    return ctx.reply(`❌ Analysis failed: ${err.message}`);
+  }
+
+  const best = analysis.best;
+  if (!best) {
+    return ctx.reply(
+      `❌ *No mintable contract found.*\n\n` +
+      `Found ${analysis.allFound} address(es) on the page but none matched an NFT contract or known mint pattern.\n\n` +
+      `Try \`/mintca\` with the contract address directly if you have it.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  // For tokenId-type mints, probe for available IDs now
+  let tokenIds = [];
+  if (best.mintType === "tokenId") {
+    await bot.api.editMessageText(ctx.chat.id, statusMsg.message_id,
+      `🔍 Scanning for available token IDs on \`${best.contract}\`...`, { parse_mode: "Markdown" });
+    tokenIds = await findAvailableTokenIds(provider, best.contract, 150);
+  }
+
+  const id = Math.random().toString(36).slice(2, 10);
+  pendingLinkMints.set(id, {
+    contract: best.contract,
+    selector: best.selector,
+    sig: best.sig,
+    mintFn: best.mintFn,
+    priceEth: best.priceEth,
+    mintType: best.mintType,
+    qty,
+    group,
+    tokenIds,
+    url,
+  });
+
+  // Auto-expire after 10 minutes
+  setTimeout(() => pendingLinkMints.delete(id), 10 * 60 * 1000);
+
+  const isFree = best.priceEth === "0";
+  const priceStr = isFree ? "🆓 FREE" : `${best.priceEth} ETH`;
+  const typeEmoji = { noarg: "🔘", quantity: "🔢", tokenId: "🎟️", unknown: "❓" }[best.mintType] || "❓";
+
+  let summary =
+    `🔗 *Link Analysis Complete*\n\n` +
+    `URL: ${url}\n` +
+    `Contract: \`${best.contract}\`\n` +
+    `Verified: ${best.hasAbi ? "✅" : "❌ unverified"}\n` +
+    `Mint fn: \`${best.sig || best.selector || "unknown"}\`\n` +
+    `Type: ${typeEmoji} ${best.mintType}\n` +
+    `Price: ${priceStr}\n` +
+    `Source: ${best.source || "unknown"}\n`;
+
+  if (best.mintType === "tokenId") {
+    if (tokenIds.length === 0) {
+      summary += `\n⚠️ Could not find any available token IDs — contract may be sold out or use a non-standard ID scheme.`;
+    } else {
+      summary += `\n🎟️ Found *${tokenIds.length}* available token IDs (will assign 1 per wallet)`;
+    }
+  }
+
+  if (!best.sig && !best.selector) {
+    summary += `\n\n⚠️ Could not decode mint format. Try \`/mintca ${best.contract}\` or check Etherscan for the contract.`;
+    return ctx.reply(summary, { parse_mode: "Markdown" });
+  }
+
+  if (best.mintType === "tokenId" && tokenIds.length === 0) {
+    return ctx.reply(summary, { parse_mode: "Markdown" });
+  }
+
+  const kb = new InlineKeyboard()
+    .text("🚀 Mint — All Wallets", `lm_all_${id}`)
+    .text("🎯 Mint — Group", `lm_grp_${id}`)
+    .row()
+    .text("❌ Cancel", `lm_cancel_${id}`);
+
+  await ctx.reply(summary, { parse_mode: "Markdown", reply_markup: kb });
+});
+
+// Mint all wallets
+bot.callbackQuery(/^lm_all_(.+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  const job = pendingLinkMints.get(id);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired — run /analyzelink again.");
+  await ctx.answerCallbackQuery("Minting...");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+  await _fireLinkMint(ctx, job, null);
+});
+
+// Show group picker
+bot.callbackQuery(/^lm_grp_(.+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  const job = pendingLinkMints.get(id);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired.");
+  await ctx.answerCallbackQuery();
+
+  const groups = getGroups();
+  if (!groups || groups.length === 0) {
+    return ctx.reply("❌ No groups configured. Use /creategroup first.");
+  }
+
+  const kb = new InlineKeyboard();
+  groups.forEach((g, i) => {
+    kb.text(g.name, `lm_g_${id}_${g.name}`);
+    if ((i + 1) % 3 === 0) kb.row();
+  });
+  kb.row().text("❌ Cancel", `lm_cancel_${id}`);
+
+  await ctx.reply("Which group?", { reply_markup: kb });
+});
+
+// Mint specific group
+bot.callbackQuery(/^lm_g_([^_]+)_(.+)$/, async (ctx) => {
+  const groupName = ctx.match[1];
+  const id = ctx.match[2];
+  const job = pendingLinkMints.get(id);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired.");
+  await ctx.answerCallbackQuery(`Minting group: ${groupName}`);
+  await _fireLinkMint(ctx, job, groupName);
+});
+
+// Cancel
+bot.callbackQuery(/^lm_cancel_(.+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  pendingLinkMints.delete(id);
+  await ctx.answerCallbackQuery("Cancelled.");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+});
+
+async function _fireLinkMint(ctx, job, groupOverride) {
+  const { contract, selector, sig, mintFn, priceEth, mintType, qty, tokenIds, url } = job;
+  const group = groupOverride ?? job.group;
+  const isFree = priceEth === "0";
+  const valueEth = isFree ? "0" : (parseFloat(priceEth) * qty).toFixed(6);
+
+  await ctx.reply(
+    `⚡ *Firing Link Mint...*\n\n` +
+    `Contract: \`${contract}\`\n` +
+    `Fn: \`${sig || selector}\`\n` +
+    `Type: ${mintType} | Price: ${isFree ? "FREE" : `${priceEth} ETH`}\n` +
+    `Wallets: ${group ? `group *${group}*` : "all sub-wallets"}`,
+    { parse_mode: "Markdown" }
+  );
+
+  try {
+    let result;
+
+    if (mintType === "tokenId" && tokenIds.length > 0) {
+      // Each wallet gets its own token ID — build per-wallet calldata
+      const mintSig = sig || "mint(uint256)";
+      const iface = new ethers.Interface([`function ${mintSig}`]);
+      const fnName = mintSig.split("(")[0];
+
+      let idIndex = 0;
+      const calldataFn = (address) => {
+        if (idIndex >= tokenIds.length) return null;
+        const tokenId = tokenIds[idIndex++];
+        try {
+          return iface.encodeFunctionData(fnName, [tokenId]);
+        } catch {
+          // fallback: raw encode
+          return selector + tokenId.toString(16).padStart(64, "0");
+        }
+      };
+      result = await executePerWalletMint(contract, calldataFn, valueEth, group);
+    } else {
+      // Quantity or no-arg — single calldata for all wallets
+      let calldata;
+      if (mintType === "noarg" || !selector) {
+        calldata = selector || "0x1249c58b";
+      } else if (mintFn) {
+        calldata = buildMintCalldata(mintFn, qty, mainSigner.address) || selector;
+      } else {
+        // Re-encode qty into last word of selector if it's a known qty selector
+        const QTY_SIGS = ["0xa0712d68", "0x379607f5", "0x3b4c4b25", "0x61a503b0", "0xefef39a1"];
+        if (QTY_SIGS.includes(selector)) {
+          calldata = selector + qty.toString(16).padStart(64, "0");
+        } else {
+          calldata = selector; // raw selector, use as-is
+        }
+      }
+      result = await executeManualMint(contract, calldata, valueEth, group);
+    }
+
+    await ctx.reply(
+      `✅ *Link Mint Complete!*\n\n` +
+      `✅ Succeeded: ${result.succeeded}\n` +
+      `❌ Failed: ${result.failed}\n` +
+      `⏭️ Skipped (low balance): ${result.skipped}\n` +
+      `📊 Total wallets: ${result.total}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Mint failed: ${err.message}`);
+  }
+}
 
 // ─── Decode Contract ──────────────────────────────────────────────────────────
 
@@ -2657,6 +2891,7 @@ bot.start({
       // Manual mint
       { command: "mint",            description: "Fire a manual mint now" },
       { command: "mintca",          description: "Auto-detect mint fn + price from contract ABI, then mint" },
+      { command: "analyzelink",     description: "Paste a mint site URL — bot finds contract + mints automatically" },
       // Wallets
       { command: "wallets",         description: "List all sub-wallets with balances" },
       { command: "addwallet",       description: "Add a sub-wallet" },

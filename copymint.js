@@ -813,6 +813,63 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
   return { succeeded, failed, skipped, total: signers.length };
 }
 
+// Like executeManualMint but each wallet gets its own calldata.
+// calldataFn(signerAddress) must return the hex calldata for that wallet.
+export async function executePerWalletMint(contractAddress, calldataFn, valueEth, groupName = null) {
+  const value = valueEth ? ethers.parseEther(valueEth.toString()) : 0n;
+
+  const subSigners = groupName ? getGroupSigners(groupName, provider) : getAllSigners(provider);
+  const signers = [mainSigner, ...subSigners];
+
+  if (subSigners.length === 0 && !groupName) throw new Error("No sub-wallets configured");
+
+  const feeData = await provider.getFeeData();
+  const maxFeePerGas = feeData.maxFeePerGas
+    ? (feeData.maxFeePerGas * 120n) / 100n
+    : ethers.parseUnits("50", "gwei");
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+  const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n;
+
+  const funded = (
+    await Promise.all(
+      signers.map(async (signer) => {
+        try {
+          const balance = await provider.getBalance(signer.address);
+          return balance >= value + GAS_BUFFER ? signer : null;
+        } catch { return null; }
+      })
+    )
+  ).filter(Boolean);
+
+  if (funded.length === 0) throw new Error("No wallets have enough ETH");
+
+  const results = await Promise.allSettled(
+    funded.map(async (signer) => {
+      const data = calldataFn(signer.address);
+      if (!data) throw new Error(`No calldata for ${signer.address}`);
+      const tx = await signer.sendTransaction({
+        to: contractAddress, data, value,
+        gasLimit: 300000n, type: 2, maxFeePerGas, maxPriorityFeePerGas,
+      });
+      await logMint({
+        contract: contractAddress.toLowerCase(),
+        wallet: signer.address.toLowerCase(),
+        txHash: tx.hash,
+        ethSpent: parseFloat(ethers.formatEther(value)),
+        timestamp: Date.now(),
+      });
+      return tx;
+    })
+  );
+
+  return {
+    succeeded: results.filter((r) => r.status === "fulfilled").length,
+    failed: results.filter((r) => r.status === "rejected").length,
+    skipped: signers.length - funded.length,
+    total: signers.length,
+  };
+}
+
 async function sendViaFlashbots(mintTx) {
   const currentBlock = await provider.getBlockNumber();
 
