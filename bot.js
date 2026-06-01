@@ -483,8 +483,8 @@ bot.command("setalert", async (ctx) => {
     lastFiredAt: null,
     createdAt: Date.now(),
   });
-  const floorNote = currentFloor !== null ? ` (current floor: ${currentFloor.toFixed(4)} ETH)` : "";
-  await ctx.reply(`✅ Alert set!\nI'll ping you when *${name}* floor ${directionLabel} *${targetPrice} ETH*${floorNote}.`, { parse_mode: "Markdown" });
+  const floorNote = currentFloor !== null ? `\nCurrent floor: *${currentFloor.toFixed(4)} ETH*` : "\nCurrent floor: *no listings yet*";
+  await ctx.reply(`✅ Alert set!\nI'll ping you when *${name}* floor ${directionLabel} *${targetPrice} ETH*${floorNote}`, { parse_mode: "Markdown" });
 });
 
 bot.command("removealert", async (ctx) => {
