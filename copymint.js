@@ -43,7 +43,7 @@ let telegramAskApproval;
 
 const FLASHBOTS_RELAY = "https://relay.flashbots.net";
 const MAX_BLOCKS_TO_TRY = 3;
-const DEFAULT_SKIP_ABOVE_USD = 0.51;
+const DEFAULT_SKIP_ABOVE_USD = 2.1;
 const APPROVAL_TIMEOUT_MS = 120000;
 
 const pendingApprovals = new Map();
@@ -154,11 +154,12 @@ async function getCollectionName(contractAddress) {
 }
 
 // USD tiers: price per NFT → how many we mint
-// < $0.15  → 10  |  $0.15–$0.30 → 3  |  $0.30–$0.51 → 2  |  > $0.51 → skip
+// < $0.15  → 10  |  $0.15–$0.30 → 3  |  $0.30–$1.00 → 2  |  $1.00–$2.10 → 1  |  > $2.10 → skip
 function getTargetQty(priceUsdPerNft) {
   if (priceUsdPerNft < 0.15) return 10;
   if (priceUsdPerNft <= 0.30) return 3;
-  return 2;
+  if (priceUsdPerNft <= 1.00) return 2;
+  return 1;
 }
 
 // Check if the contract enforces a per-wallet limit. Runs all probes in parallel; cached.
@@ -651,7 +652,7 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
 
   if (subSkip) {
     await telegramNotify(
-      `⛔ *Sub-Wallets — Skipped*\n\nPer-unit price exceeds $0.51 — not minting on any wallet.`
+      `⛔ *Sub-Wallets — Skipped*\n\nPer-unit price exceeds $2.10 — not minting on any wallet.`
     );
     return;
   }
