@@ -30,6 +30,7 @@ export function setTrackerAlertFn(fn) {
 const MINT_SELECTORS = new Set([
   // ── Public mints ──────────────────────────────────────────────
   "0xa0712d68", // mint(uint256)
+  "0xaf0db117", // mint(uint16)
   "0x1249c58b", // mint()
   "0x6a627842", // mintTo(address)
   "0x40c10f19", // mint(address,uint256)
