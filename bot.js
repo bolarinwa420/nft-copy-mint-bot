@@ -6,7 +6,7 @@ import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAle
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState, setTrackerAlertFn } from "./tracker.js";
 import { initMoralisStream, addToMoralisStream, removeFromMoralisStream } from "./moralisStream.js";
-import { initCopyMint, resolveApproval, executeManualMint, executePerWalletMint } from "./copymint.js";
+import { initCopyMint, resolveApproval, resolveIdSelection, setIdSelectionFn, executeManualMint, executePerWalletMint } from "./copymint.js";
 import { initScheduler, createJob, cancelJob, getPendingJobs } from "./scheduler.js";
 import { initWatcher, startWatcher, buildMintPublicCalldata } from "./watcher.js";
 import { initSweepWatcher } from "./sweepWatcher.js";
@@ -102,6 +102,29 @@ if (process.env.MORALIS_API_KEY) {
   await startTracking();
 }
 await initCopyMint(provider, mainSigner, notify, askApproval);
+
+async function askIdSelection({ mintId, nftAddr, available, total, minted, allAvailable }) {
+  const chatId = getSettings().alertChatId || process.env.ALERT_CHAT_ID;
+  if (!chatId) return;
+  const kb = new InlineKeyboard();
+  available.forEach((id, i) => {
+    kb.text(`#${id}`, `id_pick_${mintId}_${id}`);
+    if ((i + 1) % 3 === 0) kb.row();
+  });
+  if (available.length % 3 !== 0) kb.row();
+  kb.text("🔢 Custom ID", `id_custom_${mintId}`);
+  await bot.api.sendMessage(
+    chatId,
+    `🎨 *ID-Based Mint*\n\n` +
+    `Contract: \`${nftAddr}\`\n` +
+    `Available: *${allAvailable.toLocaleString()}* IDs${total ? ` / ${total.toLocaleString()} total` : ""}\n\n` +
+    `Pick a token ID for main wallet.\nSub-wallets auto-assign from remaining.\n` +
+    `_⏰ Times out in 2 min_`,
+    { parse_mode: "Markdown", reply_markup: kb }
+  );
+}
+setIdSelectionFn(askIdSelection);
+
 initScheduler(notify);
 initWatcher(provider, notify);
 initPriceAlerts(notify);
@@ -944,6 +967,7 @@ bot.command("sweepnfts", async (ctx) => {
 
 // Conversation state for /schedule flow
 const scheduleState = new Map();
+const pendingCustomId = new Map(); // chatId → mintId
 
 bot.command("schedule", async (ctx) => {
   scheduleState.set(ctx.chat.id, { step: "contract" });
@@ -2697,6 +2721,23 @@ bot.on("message:text", async (ctx) => {
 
   if (text.startsWith("/")) return; // handled by commands
 
+  // Custom token ID input for ID-based mint selection
+  if (pendingCustomId.has(chatId)) {
+    const mintId = pendingCustomId.get(chatId);
+    const parsed = parseInt(text, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      return ctx.reply("⚠️ Invalid — enter a whole number (e.g. 420).");
+    }
+    pendingCustomId.delete(chatId);
+    const resolved = resolveIdSelection(mintId, BigInt(parsed));
+    if (resolved) {
+      await ctx.reply(`✅ Token ID *#${parsed}* selected — minting now...`, { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply("⏰ Timed out — the mint window expired.");
+    }
+    return;
+  }
+
   const state = scheduleState.get(chatId);
   if (!state) return;
 
@@ -2797,6 +2838,31 @@ bot.callbackQuery(/^skip_mint_(.+)$/, async (ctx) => {
     await ctx.editMessageText("⏰ Too late — this mint already timed out.");
   }
   await ctx.answerCallbackQuery("Skipped");
+});
+
+// ─── ID Selection Callbacks ───────────────────────────────────────────────────
+
+bot.callbackQuery(/^id_pick_([^_]+)_(\d+)$/, async (ctx) => {
+  const mintId = ctx.match[1];
+  const tokenIdStr = ctx.match[2];
+  const tokenId = BigInt(tokenIdStr);
+  const resolved = resolveIdSelection(mintId, tokenId);
+  if (resolved) {
+    await ctx.editMessageText(
+      ctx.message?.text + `\n\n✅ *#${tokenIdStr} selected — minting...*`,
+      { parse_mode: "Markdown" }
+    );
+  } else {
+    await ctx.editMessageText("⏰ Selection timed out.");
+  }
+  await ctx.answerCallbackQuery(`Minting #${tokenIdStr}!`);
+});
+
+bot.callbackQuery(/^id_custom_(.+)$/, async (ctx) => {
+  const mintId = ctx.match[1];
+  pendingCustomId.set(ctx.chat.id, mintId);
+  await ctx.answerCallbackQuery("Send me the token ID");
+  await ctx.reply("🔢 Enter the exact token ID (number) you want to mint:");
 });
 
 // ─── Inline Keyboard Callbacks ────────────────────────────────────────────────

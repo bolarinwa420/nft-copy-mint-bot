@@ -1,8 +1,10 @@
 import { ethers } from "ethers";
+import { v4 as uuidv4 } from "uuid";
 import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 import { getSettings, logMint } from "./storage.js";
 import { mintEvents, tmaEvents } from "./tracker.js";
 import { getAllSigners, getGroupSigners } from "./wallets.js";
+import { scanAvailableIds } from "./idScanner.js";
 import { getWhaleLabel } from "./whale-meta.js";
 
 const SEADROP_ADDRESS = "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
@@ -45,7 +47,33 @@ const DEFAULT_SKIP_ABOVE_USD = 0.51;
 const APPROVAL_TIMEOUT_MS = 120000;
 
 const pendingApprovals = new Map();
+const pendingIdSelections = new Map();
 const processedTxHashes = new Set();
+
+let telegramAskIdSelection = null;
+
+export function setIdSelectionFn(fn) {
+  telegramAskIdSelection = fn;
+}
+
+export function resolveIdSelection(mintId, tokenId) {
+  const pending = pendingIdSelections.get(mintId);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  pendingIdSelections.delete(mintId);
+  pending.resolve(tokenId);
+  return true;
+}
+
+function waitForIdSelection(mintId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingIdSelections.delete(mintId);
+      reject(new Error("timeout"));
+    }, 120000);
+    pendingIdSelections.set(mintId, { resolve, reject, timer });
+  });
+}
 
 let cachedEthPrice = null;
 let priceLastFetched = 0;
@@ -497,30 +525,53 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
   } catch (simErr) {
     const reason = simErr.reason || simErr.message?.slice(0, 120) || "unknown revert";
 
-    // Token ID collision? Scan for a free slot and retry
+    // Token ID collision? Let user pick from available IDs
     if (isTokenCollisionRevert(reason)) {
       const nftAddr = getNftContract(mintTx.to, mintTx.data);
       const collidedId = decodeTokenIdFromCalldata(mintTx.data);
       if (collidedId !== null) {
-        await telegramNotify(
-          `🔍 *Token ID #${collidedId} already minted*\nScanning for a free slot...`
-        );
-        const [freeId] = await findFreeTokenIds(nftAddr, collidedId + 1n, 1);
-        if (freeId !== undefined) {
-          mintTx.data = reencodeWithTokenId(mintTx.data, freeId);
+        if (telegramAskIdSelection) {
+          await telegramNotify(`🔍 Token ID *#${collidedId}* taken — scanning available IDs...`);
+          const scanResult = await scanAvailableIds(nftAddr, provider);
+          if (scanResult.allAvailable === 0) {
+            await telegramNotify(`⚠️ *Fully minted out* — no IDs available. Skipping.`);
+            return;
+          }
+          const mintId = uuidv4().slice(0, 8);
+          await telegramAskIdSelection({ mintId, nftAddr, ...scanResult });
+          let chosenId;
+          try {
+            chosenId = await waitForIdSelection(mintId);
+          } catch {
+            await telegramNotify(`⏰ *ID selection timed out* — main wallet skipped.`);
+            return;
+          }
+          mintTx.data = reencodeWithTokenId(mintTx.data, chosenId);
           try {
             await provider.call({ ...mintTx, from: await mainSigner.getAddress() });
-            await telegramNotify(`✅ Free token ID #${freeId} found — minting...`);
           } catch (retryErr) {
-            const retryReason = retryErr.reason || retryErr.message?.slice(0, 120) || "unknown revert";
-            await telegramNotify(
-              `⚠️ *Simulation Failed After ID Scan*\n\nReason: \`${retryReason}\``
-            );
+            const r = retryErr.reason || retryErr.message?.slice(0, 100) || "unknown";
+            await telegramNotify(`⚠️ *ID #${chosenId} also reverts:* \`${r}\``);
             return;
           }
         } else {
-          await telegramNotify(`⚠️ *No Free Token IDs Found* — could not locate an unclaimed slot. Skipping.`);
-          return;
+          // Fallback: silent auto-scan
+          await telegramNotify(`🔍 *Token ID #${collidedId} already minted*\nScanning for a free slot...`);
+          const [freeId] = await findFreeTokenIds(nftAddr, collidedId + 1n, 1);
+          if (freeId !== undefined) {
+            mintTx.data = reencodeWithTokenId(mintTx.data, freeId);
+            try {
+              await provider.call({ ...mintTx, from: await mainSigner.getAddress() });
+              await telegramNotify(`✅ Free token ID #${freeId} found — minting...`);
+            } catch (retryErr) {
+              const retryReason = retryErr.reason || retryErr.message?.slice(0, 120) || "unknown revert";
+              await telegramNotify(`⚠️ *Simulation Failed After ID Scan*\n\nReason: \`${retryReason}\``);
+              return;
+            }
+          } else {
+            await telegramNotify(`⚠️ *No Free Token IDs Found* — could not locate an unclaimed slot. Skipping.`);
+            return;
+          }
         }
       } else {
         await telegramNotify(
