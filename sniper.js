@@ -8,7 +8,8 @@ import { ethers } from "ethers";
 import { readSeadropSchedule, SEADROP_ADDRESS, buildMintAllowListCalldata } from "./mintInspector.js";
 import { executeManualMint, executePerWalletMint } from "./copymint.js";
 import { getMintSigners } from "./wallets.js";
-import { addSnipe, getSnipes, updateSnipe } from "./storage.js";
+import { addSnipe, getSnipes, updateSnipe, getSettings } from "./storage.js";
+import { computeGas } from "./gas.js";
 
 const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
 const LEAD_MS = 5_000;          // start polling 5s before the expected open
@@ -17,12 +18,22 @@ const POLL_WINDOW_MS = 120_000; // give up 2 min after expected open if it never
 
 let provider;
 let notifyFn;
+let flashbotsProvider; // optional private-mempool send path
 const timers = new Map(); // snipeId -> timeout
 
-export function initSniper(ethProvider, notify) {
+export function initSniper(ethProvider, notify, fbProvider = null) {
   provider = ethProvider;
   notifyFn = notify;
+  flashbotsProvider = fbProvider;
   restoreSnipes();
+}
+
+// Build the gas + send options for a competitive fire: war-tier gas, optional Flashbots-private send.
+async function fireOpts(signers) {
+  const s = getSettings();
+  const gas = await computeGas(provider, "war", s.gasCeilingGwei || 200);
+  const sendVia = s.privateSnipe && flashbotsProvider ? flashbotsProvider : undefined;
+  return { signers, gas, sendVia };
 }
 
 function buildMintPublicCalldata(nftContract, qty) {
@@ -136,7 +147,7 @@ async function fireAllowlist(snipe) {
   );
 
   try {
-    const r = await executePerWalletMint(SEADROP_ADDRESS, calldataFn, totalValue, null, { signers });
+    const r = await executePerWalletMint(SEADROP_ADDRESS, calldataFn, totalValue, null, await fireOpts(signers));
     await updateSnipe(snipe.id, { status: "done" });
     await notifyFn(
       `✅ *Allowlist snipe complete — ${snipe.label}*\n\n` +
@@ -168,7 +179,7 @@ async function fire(snipe, pub) {
 
   try {
     // SeaDrop mints go through the router; value = price × qty per wallet
-    const r = await executeManualMint(SEADROP_ADDRESS, calldata, totalValue, null, { signers });
+    const r = await executeManualMint(SEADROP_ADDRESS, calldata, totalValue, null, await fireOpts(signers));
     await updateSnipe(snipe.id, { status: "done" });
     await notifyFn(
       `✅ *Snipe complete — ${snipe.label}*\n\n` +

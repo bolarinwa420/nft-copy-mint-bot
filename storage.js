@@ -13,6 +13,9 @@ const defaultData = {
     whitelist: [],       // if non-empty, only auto-mint these contracts
     blacklist: [],       // never auto-mint these contracts
     allowFreeMints: true, // whether to auto-mint free (0 ETH) mints
+    gasTier: "fast",      // default gas tier for /inspect manual fires: normal | fast | war
+    gasCeilingGwei: 200,  // hard cap on maxFeePerGas (safety)
+    privateSnipe: false,  // route snipe sends through Flashbots Protect (private mempool, no failed-tx gas)
   },
   jobs: [],          // scheduled mints
   snipes: [],        // SeaDrop "mint the moment it opens" snipes: [{ id, nftContract, qty, startTime, status }]

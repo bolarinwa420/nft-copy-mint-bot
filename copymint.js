@@ -815,14 +815,16 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
     }
   }
 
-  const feeData = await provider.getFeeData();
-  const maxFeePerGas = feeData.maxFeePerGas
-    ? (feeData.maxFeePerGas * 120n) / 100n
-    : ethers.parseUnits("50", "gwei");
-  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
-    ? feeData.maxPriorityFeePerGas
-    : ethers.parseUnits("2", "gwei");
-  const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n; // dynamic: based on live gas price
+  // opts.gas lets callers pass a tier-computed { maxFeePerGas, maxPriorityFeePerGas }; else fall back to live +20%
+  let maxFeePerGas, maxPriorityFeePerGas;
+  if (opts.gas) {
+    ({ maxFeePerGas, maxPriorityFeePerGas } = opts.gas);
+  } else {
+    const feeData = await provider.getFeeData();
+    maxFeePerGas = feeData.maxFeePerGas ? (feeData.maxFeePerGas * 120n) / 100n : ethers.parseUnits("50", "gwei");
+    maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+  }
+  const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n; // dynamic: based on chosen gas
 
   const funded = (
     await Promise.all(
@@ -851,7 +853,9 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
 
   const results = await Promise.allSettled(
     funded.map(async (signer) => {
-      const tx = await signer.sendTransaction(mintTx);
+      // opts.sendVia (e.g. Flashbots Protect provider) routes the broadcast privately; reads stay on main provider
+      const s = opts.sendVia ? signer.connect(opts.sendVia) : signer;
+      const tx = await s.sendTransaction(mintTx);
       await logMint({
         contract: contractAddress.toLowerCase(),
         wallet: signer.address.toLowerCase(),
@@ -885,11 +889,14 @@ export async function executePerWalletMint(contractAddress, calldataFn, valueEth
     if (subSigners.length === 0 && !groupName) throw new Error("No sub-wallets configured");
   }
 
-  const feeData = await provider.getFeeData();
-  const maxFeePerGas = feeData.maxFeePerGas
-    ? (feeData.maxFeePerGas * 120n) / 100n
-    : ethers.parseUnits("50", "gwei");
-  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+  let maxFeePerGas, maxPriorityFeePerGas;
+  if (opts.gas) {
+    ({ maxFeePerGas, maxPriorityFeePerGas } = opts.gas);
+  } else {
+    const feeData = await provider.getFeeData();
+    maxFeePerGas = feeData.maxFeePerGas ? (feeData.maxFeePerGas * 120n) / 100n : ethers.parseUnits("50", "gwei");
+    maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+  }
   const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n;
 
   const funded = (
@@ -909,7 +916,8 @@ export async function executePerWalletMint(contractAddress, calldataFn, valueEth
     funded.map(async (signer) => {
       const data = calldataFn(signer.address);
       if (!data) throw new Error(`No calldata for ${signer.address}`);
-      const tx = await signer.sendTransaction({
+      const s = opts.sendVia ? signer.connect(opts.sendVia) : signer;
+      const tx = await s.sendTransaction({
         to: contractAddress, data, value,
         gasLimit: 300000n, type: 2, maxFeePerGas, maxPriorityFeePerGas,
       });

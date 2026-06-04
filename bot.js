@@ -23,6 +23,15 @@ import { inspectMint, buildAllowlistCalldata, getAllowlistProof, phaseStatus, fm
 
 const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
 import { initSniper, scheduleSnipe, listSnipes, cancelSnipe } from "./sniper.js";
+import { computeGas, GAS_TIERS, gweiOf } from "./gas.js";
+
+// Gas + private-send opts for a manual /inspect fire, using the configured tier
+async function inspectFireOpts(signers) {
+  const s = getSettings();
+  const gas = await computeGas(provider, s.gasTier || "fast", s.gasCeilingGwei || 200);
+  const sendVia = s.privateSnipe ? flashbotsProvider : undefined;
+  return { signers, gas, sendVia };
+}
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
@@ -34,9 +43,16 @@ import { initTwitterWatcher, getTwitterWatcherStatus } from "./twitterWatcher.js
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-const provider = new ethers.JsonRpcProvider("https://ethereum.publicnode.com");
+// Dedicated Alchemy RPC for low-latency reads + sends; fall back to public node if no key
+const RPC_URL = process.env.ALCHEMY_API_KEY
+  ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+  : "https://ethereum.publicnode.com";
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+// Flashbots Protect — private mempool, no gas paid on reverted/failed mints, front-run resistant
+const flashbotsProvider = new ethers.JsonRpcProvider("https://rpc.flashbots.net/fast");
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
+console.log(`[Init] RPC: ${process.env.ALCHEMY_API_KEY ? "Alchemy (dedicated)" : "publicnode (fallback)"}`);
 
 // Bot notification function — sends to alert chat or falls back to admin
 async function notify(text, txHash, parseMode = "Markdown") {
@@ -133,7 +149,7 @@ setIdSelectionFn(askIdSelection);
 
 initScheduler(notify);
 initWatcher(provider, notify);
-initSniper(provider, notify);
+initSniper(provider, notify, flashbotsProvider);
 initPriceAlerts(notify);
 initSweepWatcher(notify);
 initDailyDigest(notify);
@@ -1832,7 +1848,7 @@ bot.callbackQuery(/^insp_pub_([^_]+)_(\d+)$/, async (ctx) => {
     { parse_mode: "Markdown" }
   );
   try {
-    const r = await executeManualMint(job.contract, calldata, valueEth, null, { signers: getMintSigners(provider) });
+    const r = await executeManualMint(job.contract, calldata, valueEth, null, await inspectFireOpts(getMintSigners(provider)));
     await ctx.reply(`✅ Done — ✅ ${r.succeeded} · ❌ ${r.failed} · ⏭️ ${r.skipped} · 📊 ${r.total}`);
   } catch (err) {
     await ctx.reply(`❌ Mint failed: ${err.message}`);
@@ -1866,7 +1882,7 @@ bot.callbackQuery(/^insp_al_([^_]+)_(\d+)$/, async (ctx) => {
     { parse_mode: "Markdown" }
   );
   try {
-    const r = await executePerWalletMint(job.contract, calldataFn, valueEth, null, { signers: getMintSigners(provider) });
+    const r = await executePerWalletMint(job.contract, calldataFn, valueEth, null, await inspectFireOpts(getMintSigners(provider)));
     await ctx.reply(`✅ Done — ✅ ${r.succeeded} · ❌ ${r.failed} · ⏭️ ${r.skipped} · 📊 ${r.total}`);
   } catch (err) {
     await ctx.reply(`❌ Allowlist mint failed: ${err.message}`);
@@ -1974,6 +1990,56 @@ bot.command("cancelsnipe", async (ctx) => {
   if (!id) return ctx.reply("Usage: `/cancelsnipe <id>` (see /snipes)", { parse_mode: "Markdown" });
   await cancelSnipe(id);
   await ctx.reply(`🛑 Snipe \`${id}\` cancelled.`, { parse_mode: "Markdown" });
+});
+
+// ─── Execution speed: gas tier + private mempool ─────────────────────────────
+
+bot.command("gas", async (ctx) => {
+  const arg = (ctx.match?.trim() || "").toLowerCase();
+  const s = getSettings();
+
+  if (arg.startsWith("ceiling")) {
+    const n = parseInt(arg.split(/\s+/)[1], 10);
+    if (isNaN(n) || n < 10) return ctx.reply("Usage: `/gas ceiling 150` (gwei, min 10)", { parse_mode: "Markdown" });
+    await updateSettings({ gasCeilingGwei: n });
+    return ctx.reply(`🧢 Gas ceiling set to *${n} gwei*.`, { parse_mode: "Markdown" });
+  }
+  if (["normal", "fast", "war"].includes(arg)) {
+    await updateSettings({ gasTier: arg });
+    return ctx.reply(`${GAS_TIERS[arg].emoji} Default gas tier set to *${arg}* for /inspect fires. (Snipes always use 🔥 war.)`, { parse_mode: "Markdown" });
+  }
+
+  // Show current state + live base fee
+  let baseStr = "?";
+  try {
+    const g = await computeGas(provider, "normal", s.gasCeilingGwei || 200);
+    baseStr = gweiOf(g.baseFee);
+  } catch {}
+  const tier = s.gasTier || "fast";
+  await ctx.reply(
+    `⛽ *Gas Settings*\n\n` +
+    `Live base fee: ~${baseStr} gwei\n` +
+    `Default tier (/inspect): ${GAS_TIERS[tier].emoji} *${tier}* (tip ${GAS_TIERS[tier].tipGwei} gwei)\n` +
+    `Snipe tier: 🔥 *war* (tip ${GAS_TIERS.war.tipGwei} gwei) — always\n` +
+    `Ceiling: 🧢 ${s.gasCeilingGwei || 200} gwei\n` +
+    `Private send: ${s.privateSnipe ? "🛡 ON (Flashbots)" : "🌐 OFF (public mempool)"}\n\n` +
+    `Set: \`/gas war\` · \`/gas fast\` · \`/gas normal\` · \`/gas ceiling 150\`\n` +
+    `Toggle private: /privatesnipe`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("privatesnipe", async (ctx) => {
+  const s = getSettings();
+  const next = !s.privateSnipe;
+  await updateSettings({ privateSnipe: next });
+  await ctx.reply(
+    next
+      ? `🛡 *Private send ON.* Fires route through Flashbots Protect — no gas on failed mints, front-run resistant. ` +
+        `Trade-off: may land a block or two later than an aggressive public tx.`
+      : `🌐 *Private send OFF.* Fires go to the public mempool (faster inclusion, but you pay gas on failures and can be front-run).`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 // ─── Decode Contract ──────────────────────────────────────────────────────────
@@ -3396,6 +3462,8 @@ bot.start({
       { command: "mint",            description: "Mint entry point — paste an OpenSea link or contract" },
       { command: "inspect",         description: "Paste link/CA → detect phase + schedule + proof, then mint or snipe" },
       { command: "snipes",          description: "View armed 'mint the moment it opens' snipes" },
+      { command: "gas",             description: "View/set gas tier + ceiling for fires (normal/fast/war)" },
+      { command: "privatesnipe",    description: "Toggle Flashbots private mempool for fires" },
       { command: "mintwallets",     description: "List the dedicated /inspect mint pool (max 20)" },
       { command: "addmintwallet",   description: "Add a wallet to the mint pool (paste its private key)" },
       { command: "removemintwallet", description: "Remove a wallet from the mint pool" },
