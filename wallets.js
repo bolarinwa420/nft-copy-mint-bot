@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { addSubWallet, removeSubWallet, getSubWallets, getGroupWallets } from "./storage.js";
+import { addSubWallet, removeSubWallet, getSubWallets, getGroupWallets, addMintWallet as storeMintWallet, removeMintWallet as storeRemoveMintWallet, getMintWallets } from "./storage.js";
 
 // Simple XOR "encryption" for local storage — not military grade but keeps raw keys out of plaintext
 function xorEncode(text, key) {
@@ -46,6 +46,30 @@ export function getWalletSigner(address, provider) {
 
 export function getAllSigners(provider) {
   return getSubWallets().map(w => {
+    const pk = xorDecode(w.encryptedPk, ENC_KEY);
+    return new ethers.Wallet(pk, provider);
+  });
+}
+
+// --- Dedicated mint pool (for /inspect), separate from the 100 copy-minter sub-wallets ---
+
+export async function addMintWallet(privateKey) {
+  const wallet = new ethers.Wallet(privateKey); // throws if PK invalid
+  const encryptedPk = xorEncode(privateKey, ENC_KEY);
+  await storeMintWallet(wallet.address, encryptedPk);
+  return wallet.address;
+}
+
+export async function removeMintWallet(address) {
+  await storeRemoveMintWallet(address);
+}
+
+export function listMintWallets() {
+  return getMintWallets().map(w => w.address);
+}
+
+export function getMintSigners(provider) {
+  return getMintWallets().map(w => {
     const pk = xorDecode(w.encryptedPk, ENC_KEY);
     return new ethers.Wallet(pk, provider);
   });

@@ -795,19 +795,24 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
 }
 
 // Manual mint — called from /mint command
-export async function executeManualMint(contractAddress, calldata, valueEth, groupName = null) {
+export async function executeManualMint(contractAddress, calldata, valueEth, groupName = null, opts = {}) {
   const value = valueEth ? ethers.parseEther(valueEth.toString()) : 0n;
   const data = calldata || "0x1249c58b"; // standard mint() selector
 
-  const subSigners = groupName
-    ? getGroupSigners(groupName, provider)
-    : getAllSigners(provider);
-
-  // Always include main wallet
-  const signers = [mainSigner, ...subSigners];
-
-  if (subSigners.length === 0 && !groupName) {
-    throw new Error("No sub-wallets configured");
+  // opts.signers lets callers (e.g. /inspect) pass a dedicated wallet pool instead of the copy-minter's 100
+  let signers;
+  if (opts.signers) {
+    signers = opts.signers;
+    if (signers.length === 0) throw new Error("No mint wallets configured — add some first");
+  } else {
+    const subSigners = groupName
+      ? getGroupSigners(groupName, provider)
+      : getAllSigners(provider);
+    // Always include main wallet
+    signers = [mainSigner, ...subSigners];
+    if (subSigners.length === 0 && !groupName) {
+      throw new Error("No sub-wallets configured");
+    }
   }
 
   const feeData = await provider.getFeeData();
@@ -867,13 +872,18 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
 
 // Like executeManualMint but each wallet gets its own calldata.
 // calldataFn(signerAddress) must return the hex calldata for that wallet.
-export async function executePerWalletMint(contractAddress, calldataFn, valueEth, groupName = null) {
+export async function executePerWalletMint(contractAddress, calldataFn, valueEth, groupName = null, opts = {}) {
   const value = valueEth ? ethers.parseEther(valueEth.toString()) : 0n;
 
-  const subSigners = groupName ? getGroupSigners(groupName, provider) : getAllSigners(provider);
-  const signers = [mainSigner, ...subSigners];
-
-  if (subSigners.length === 0 && !groupName) throw new Error("No sub-wallets configured");
+  let signers;
+  if (opts.signers) {
+    signers = opts.signers;
+    if (signers.length === 0) throw new Error("No mint wallets configured — add some first");
+  } else {
+    const subSigners = groupName ? getGroupSigners(groupName, provider) : getAllSigners(provider);
+    signers = [mainSigner, ...subSigners];
+    if (subSigners.length === 0 && !groupName) throw new Error("No sub-wallets configured");
+  }
 
   const feeData = await provider.getFeeData();
   const maxFeePerGas = feeData.maxFeePerGas

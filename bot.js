@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import { initDb, addTracked, removeTracked, getTracked, getSettings, updateSettings, createGroup, deleteGroup, getGroups, getGroupWallets, addToWhitelist, removeFromWhitelist, addToBlacklist, removeFromBlacklist, getMintLog, addWatch, removeWatch, getWatches, addPriceAlert, removePriceAlert, getPriceAlerts, addSweepWatcher, removeSweepWatcher, getSweepWatchers } from "./storage.js";
 import { initPriceAlerts, getFloorPrice as getAlertFloorPrice } from "./priceAlerts.js";
 import { addWallet, deleteWallet, listWallets, distributeGas, sweepGas, sweepNFTs, getGroupPrivateKeys } from "./wallets.js";
+import { addMintWallet, removeMintWallet, listMintWallets, getMintSigners } from "./wallets.js";
 import { initTracker, startTracking, restartTracking, getAlchemy, getTrackerState, setTrackerAlertFn } from "./tracker.js";
 import { initMoralisStream, addToMoralisStream, removeFromMoralisStream } from "./moralisStream.js";
 import { initCopyMint, resolveApproval, resolveIdSelection, setIdSelectionFn, executeManualMint, executePerWalletMint } from "./copymint.js";
@@ -18,10 +19,12 @@ import { initMintFloorTracker } from "./mintFloorTracker.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { analyzeLink, classifyMintType, findAvailableTokenIds } from "./linkAnalyzer.js";
+import { inspectMint, buildAllowlistCalldata, getAllowlistProof } from "./mintInspector.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
 import { initDaemonSniper, runDaemonSnipe, runDaemonWrap, detectPool, detectTax, detectWrapFunction, addSnipeWallet, removeSnipeWallet, clearSnipeWallets, getSnipeWalletAddresses } from "./daemonSniper.js";
+import { initTwitterWatcher, getTwitterWatcherStatus } from "./twitterWatcher.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -135,6 +138,7 @@ initSeadropDetector(notify);
 initNewCollectionWatcher(notify);
 initMintFloorTracker(notify);
 initDaemonSniper(provider, mainSigner);
+initTwitterWatcher(notify);
 startWatcher();
 if (!process.env.MORALIS_API_KEY) await startTracking();
 // Block scanner runs always — catches every whale mint regardless of Moralis stream status
@@ -1571,6 +1575,244 @@ async function _fireLinkMint(ctx, job, groupOverride) {
   }
 }
 
+// ─── Inspect: paste link/CA → phase-aware mint options ───────────────────────
+
+// id → { contract, abi, publicMintFn, allowlistMintFn, phases, qualified:Map<addr,proof>, ... }
+const pendingInspect = new Map();
+
+function inspectWallets() {
+  // Dedicated /inspect mint pool (max 20), separate from the 100 copy-minter sub-wallets
+  return listMintWallets();
+}
+
+bot.command("inspect", async (ctx) => {
+  const input = (ctx.match?.trim() || "");
+  if (!input) {
+    return ctx.reply(
+      `*🔍 Inspect & Mint*\n\n` +
+      `Paste a contract address, Etherscan/OpenSea link, or a project's mint-site URL. ` +
+      `I'll find the contract, detect the live phase (public vs allowlist), read the price, ` +
+      `and — for allowlists — pull your merkle proof so you can mint the spots you earned.\n\n` +
+      `Usage: \`/inspect <link-or-contract>\`\n\n` +
+      `Tip: for allowlist mints, paste the *mint-site URL* (not just the CA) so I can find the proof.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  await ctx.reply(`🔍 Inspecting...\n\`${input}\``, { parse_mode: "Markdown" });
+
+  let report;
+  try {
+    report = await inspectMint(input, provider, {
+      etherscanApiKey: process.env.ETHERSCAN_API_KEY,
+      openseaApiKey: process.env.OPENSEA_API_KEY,
+    });
+  } catch (err) {
+    return ctx.reply(`❌ ${err.message}`);
+  }
+
+  // Pre-compute allowlist proofs for every wallet (if there's an allowlist + a source)
+  const qualified = new Map();
+  let proofVia = null;
+  const hasAllowFn = !!report.allowlistMintFn;
+  const hasSources = report.allowlistSources.apiPaths.length + report.allowlistSources.jsonPaths.length > 0;
+
+  if (hasAllowFn && hasSources) {
+    const cache = { lists: new Map() };
+    await ctx.reply(`🔑 Allowlist detected — checking which of your ${inspectWallets().length} wallets qualify...`);
+    for (const addr of inspectWallets()) {
+      const got = await getAllowlistProof(addr, report.allowlistSources, cache);
+      if (got) { qualified.set(addr.toLowerCase(), got.proof); proofVia = got.via; }
+    }
+  }
+
+  const id = Math.random().toString(36).slice(2, 10);
+  pendingInspect.set(id, { ...report, qualified, qty: 1 });
+  setTimeout(() => pendingInspect.delete(id), 15 * 60 * 1000);
+
+  // Build the report card
+  const phaseLine = (label, p) => {
+    if (!p.exists) return `${label}: ❔ not detected`;
+    const dot = p.active ? "🟢 LIVE" : "🔴 closed";
+    const price = p.price === "0" ? "FREE" : `${p.price} ETH`;
+    return `${label}: ${dot} · ${price}`;
+  };
+
+  let card =
+    `🔗 *Inspection Complete*\n\n` +
+    `Contract: \`${report.contract}\`\n` +
+    `NFT: ${report.isNFT ? "✅" : "⚠️ not ERC721/1155"} · Verified: ${report.hasAbi ? "✅" : "❌"}\n` +
+    `Source: ${report.kind}\n\n` +
+    `*Phases*\n` +
+    `${phaseLine("🌐 Public", report.phases.public)}\n` +
+    `${phaseLine("🔑 Allowlist", report.phases.allowlist)}\n`;
+
+  if (report.publicSig) card += `\nPublic fn: \`${report.publicSig}\``;
+  if (report.allowlistSig) card += `\nAllowlist fn: \`${report.allowlistSig}\``;
+
+  if (inspectWallets().length === 0) {
+    card += `\n\n⚠️ *Mint pool is empty* — add wallets with /addmintwallet before you can fire.`;
+  } else {
+    card += `\n\n🎯 Mint pool: ${inspectWallets().length}/20 wallets`;
+  }
+
+  if (hasAllowFn) {
+    if (qualified.size > 0) {
+      card += `\n\n✅ *${qualified.size}/${inspectWallets().length} wallets on the allowlist* (proof via ${proofVia})`;
+    } else if (hasSources) {
+      card += `\n\n⚠️ Found an allowlist but *none of your wallets have a valid proof*.`;
+    } else {
+      card += `\n\n⚠️ Allowlist mint exists but I couldn't find a proof source. Paste the *mint-site URL* (not just the CA).`;
+    }
+  }
+
+  // Buttons
+  const kb = new InlineKeyboard();
+  if (report.publicMintFn) {
+    kb.text("🌐 Public ×1", `insp_pub_${id}_1`).text("🌐 Public ×3", `insp_pub_${id}_3`).row();
+  }
+  if (hasAllowFn && qualified.size > 0) {
+    kb.text("🔑 Allowlist ×1", `insp_al_${id}_1`).text("🔑 Allowlist ×max", `insp_al_${id}_0`).row();
+  }
+  kb.text("❌ Cancel", `insp_cancel_${id}`);
+
+  await ctx.reply(card, { parse_mode: "Markdown", reply_markup: kb });
+});
+
+bot.callbackQuery(/^insp_cancel_(.+)$/, async (ctx) => {
+  pendingInspect.delete(ctx.match[1]);
+  await ctx.answerCallbackQuery("Cancelled.");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+});
+
+// Public mint: insp_pub_<id>_<qty>
+bot.callbackQuery(/^insp_pub_([^_]+)_(\d+)$/, async (ctx) => {
+  const job = pendingInspect.get(ctx.match[1]);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired — run /inspect again.");
+  const qty = Math.max(1, parseInt(ctx.match[2]));
+  await ctx.answerCallbackQuery("Firing public mint...");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+
+  const calldata = buildMintCalldata(job.publicMintFn, qty, MAIN_ADDRESS);
+  if (!calldata) return ctx.reply("❌ Couldn't encode the public mint calldata for this contract.");
+
+  const price = job.phases.public.price;
+  const valueEth = price === "0" ? "0" : (parseFloat(price) * qty).toFixed(6);
+
+  await ctx.reply(
+    `⚡ *Public Mint Firing*\n\nContract: \`${job.contract}\`\n` +
+    `Fn: \`${job.publicSig}\` · Qty: ${qty}\n` +
+    `Price: ${price === "0" ? "FREE" : `${valueEth} ETH total/wallet`}`,
+    { parse_mode: "Markdown" }
+  );
+  try {
+    const r = await executeManualMint(job.contract, calldata, valueEth, null, { signers: getMintSigners(provider) });
+    await ctx.reply(`✅ Done — ✅ ${r.succeeded} · ❌ ${r.failed} · ⏭️ ${r.skipped} · 📊 ${r.total}`);
+  } catch (err) {
+    await ctx.reply(`❌ Mint failed: ${err.message}`);
+  }
+});
+
+// Allowlist mint: insp_al_<id>_<qty>  (qty 0 = max → use 1 here, contracts cap anyway)
+bot.callbackQuery(/^insp_al_([^_]+)_(\d+)$/, async (ctx) => {
+  const job = pendingInspect.get(ctx.match[1]);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired — run /inspect again.");
+  if (job.qualified.size === 0) return ctx.answerCallbackQuery("❌ No qualifying wallets.");
+  const qty = Math.max(1, parseInt(ctx.match[2]) || 1);
+  await ctx.answerCallbackQuery("Firing allowlist mint...");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+
+  const price = job.phases.allowlist.price;
+  const valueEth = price === "0" ? "0" : (parseFloat(price) * qty).toFixed(6);
+
+  // Per-wallet calldata: inject each wallet's own proof; non-qualifying wallets return null (skipped)
+  const calldataFn = (address) => {
+    const proof = job.qualified.get(address.toLowerCase());
+    if (!proof) return null;
+    return buildAllowlistCalldata(job.allowlistMintFn, qty, address, proof);
+  };
+
+  await ctx.reply(
+    `🔑 *Allowlist Mint Firing*\n\nContract: \`${job.contract}\`\n` +
+    `Fn: \`${job.allowlistSig}\` · Qty: ${qty}\n` +
+    `Qualifying wallets: ${job.qualified.size}\n` +
+    `Price: ${price === "0" ? "FREE" : `${valueEth} ETH total/wallet`}`,
+    { parse_mode: "Markdown" }
+  );
+  try {
+    const r = await executePerWalletMint(job.contract, calldataFn, valueEth, null, { signers: getMintSigners(provider) });
+    await ctx.reply(`✅ Done — ✅ ${r.succeeded} · ❌ ${r.failed} · ⏭️ ${r.skipped} · 📊 ${r.total}`);
+  } catch (err) {
+    await ctx.reply(`❌ Allowlist mint failed: ${err.message}`);
+  }
+});
+
+// ─── Mint Pool Wallets (dedicated /inspect pool, max 20) ─────────────────────
+
+// chatId → true while waiting for a pasted private key
+const pendingMintWalletPk = new Set();
+
+bot.command("mintwallets", async (ctx) => {
+  const addrs = listMintWallets();
+  if (addrs.length === 0) {
+    return ctx.reply(
+      `*🎯 Mint Pool — empty*\n\n` +
+      `These are the wallets \`/inspect\` mints from (separate from your 100 copy-minter wallets).\n\n` +
+      `Add one with /addmintwallet — max 20.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+  const list = addrs.map((a, i) => `${i + 1}. \`${a}\``).join("\n");
+  await ctx.reply(
+    `*🎯 Mint Pool (${addrs.length}/20)*\n\n${list}\n\n` +
+    `Add: /addmintwallet · Remove: /removemintwallet <address>`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("addmintwallet", async (ctx) => {
+  if (listMintWallets().length >= 20) {
+    return ctx.reply("❌ Mint pool is full (20/20). Remove one first with /removemintwallet.");
+  }
+  const arg = ctx.match?.trim();
+  // Allow inline: /addmintwallet 0xPRIVATEKEY (will be deleted immediately)
+  if (arg && /^0x[0-9a-fA-F]{64}$/.test(arg)) {
+    return _addMintWalletFromPk(ctx, arg);
+  }
+  pendingMintWalletPk.add(ctx.chat.id);
+  await ctx.reply(
+    `🔑 *Add Mint Wallet*\n\n` +
+    `Paste the *private key* of the wallet you want to mint from.\n\n` +
+    `⚠️ I'll store it encrypted and *delete your message* right away so the key doesn't sit in this chat. ` +
+    `Send /cancel to abort.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+async function _addMintWalletFromPk(ctx, pk) {
+  // Wipe the message holding the raw key ASAP
+  try { await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id); } catch {}
+  pendingMintWalletPk.delete(ctx.chat.id);
+  try {
+    const address = await addMintWallet(pk);
+    await ctx.reply(
+      `✅ *Mint wallet added*\n\n\`${address}\`\n\nPool: ${listMintWallets().length}/20`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ ${err.message}`);
+  }
+}
+
+bot.command("removemintwallet", async (ctx) => {
+  const addr = ctx.match?.trim();
+  if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+    return ctx.reply("Usage: `/removemintwallet 0xAddress`", { parse_mode: "Markdown" });
+  }
+  await removeMintWallet(addr);
+  await ctx.reply(`🗑 Removed \`${addr}\` from the mint pool. Now ${listMintWallets().length}/20.`, { parse_mode: "Markdown" });
+});
+
 // ─── Decode Contract ──────────────────────────────────────────────────────────
 
 const MINT_KEYWORDS = ["mint", "claim", "purchase", "buy", "presale", "allowlist", "whitelist"];
@@ -2719,6 +2961,20 @@ bot.on("message:text", async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text.trim();
 
+  // Mint-wallet PK capture (check before the "/" guard so /cancel works, and delete raw keys fast)
+  if (pendingMintWalletPk.has(chatId)) {
+    if (text === "/cancel") {
+      pendingMintWalletPk.delete(chatId);
+      return ctx.reply("Cancelled — no wallet added.");
+    }
+    const pk = text.startsWith("0x") ? text : `0x${text}`;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+      try { await ctx.api.deleteMessage(chatId, ctx.message.message_id); } catch {}
+      return ctx.reply("❌ That's not a valid private key (need 64 hex chars). Try again or /cancel.");
+    }
+    return _addMintWalletFromPk(ctx, pk);
+  }
+
   if (text.startsWith("/")) return; // handled by commands
 
   // Custom token ID input for ID-based mint selection
@@ -2927,6 +3183,22 @@ bot.callbackQuery("jobs_back", async (ctx) => {
   );
 });
 
+// ─── Twitter Watcher ─────────────────────────────────────────────────────────
+
+bot.command("twitterstatus", async (ctx) => {
+  const s = getTwitterWatcherStatus();
+  const icon = s.initialized ? "🟢" : "🟡";
+  await ctx.reply(
+    `${icon} *Twitter Watcher*\n\n` +
+    `Handle: @${s.handle}\n` +
+    `Status: ${s.initialized ? "Active" : "Initializing..."}\n` +
+    `Tweets seen: ${s.seenCount}\n` +
+    `Active Nitter: \`${s.activeInstance}\`\n` +
+    `Poll interval: every ${s.pollIntervalSec}s`,
+    { parse_mode: "Markdown" }
+  );
+});
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 console.log(`[Bot] Starting — Main wallet: ${MAIN_ADDRESS}`);
@@ -2958,6 +3230,10 @@ bot.start({
       { command: "mint",            description: "Fire a manual mint now" },
       { command: "mintca",          description: "Auto-detect mint fn + price from contract ABI, then mint" },
       { command: "analyzelink",     description: "Paste a mint site URL — bot finds contract + mints automatically" },
+      { command: "inspect",         description: "Paste link/CA → detect public vs allowlist phase + pull proof, then mint" },
+      { command: "mintwallets",     description: "List the dedicated /inspect mint pool (max 20)" },
+      { command: "addmintwallet",   description: "Add a wallet to the mint pool (paste its private key)" },
+      { command: "removemintwallet", description: "Remove a wallet from the mint pool" },
       // Wallets
       { command: "wallets",         description: "List all sub-wallets with balances" },
       { command: "addwallet",       description: "Add a sub-wallet" },
@@ -2999,6 +3275,7 @@ bot.start({
       { command: "daemoncheck",     description: "Pre-launch check: pool type, tax rate, wrap fn" },
       // Settings
       { command: "setalertchat",    description: "Set this chat as the alert channel" },
+      { command: "twitterstatus",   description: "Twitter watcher status (@CAONHTAN1)" },
       // Sweep watcher
       { command: "watchsweep",      description: "Alert when a wallet sweeps a collection" },
       { command: "sweepwatches",    description: "List active sweep watchers" },

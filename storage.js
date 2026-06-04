@@ -2,7 +2,8 @@ import { JSONFilePreset } from "lowdb/node";
 
 const defaultData = {
   tracked: [],       // whale wallet addresses
-  wallets: [],       // sub-wallets: [{ address, encryptedPk }]
+  wallets: [],       // sub-wallets (copy-minter pool, max 100): [{ address, encryptedPk }]
+  mintWallets: [],   // dedicated /inspect mint pool (max 20): [{ address, encryptedPk }]
   groups: {},        // wallet groups: { groupName: [walletIndex, ...] }
   settings: {
     autoMint: false,
@@ -77,6 +78,30 @@ export async function removeSubWallet(address) {
 
 export function getSubWallets() {
   return db.data.wallets;
+}
+
+// --- Mint Wallets (dedicated /inspect pool, max 20) ---
+
+export async function addMintWallet(address, encryptedPk) {
+  if (!db.data.mintWallets) db.data.mintWallets = [];
+  if (db.data.mintWallets.length >= 20) throw new Error("Max 20 mint wallets reached");
+  if (db.data.mintWallets.find(w => w.address.toLowerCase() === address.toLowerCase())) {
+    throw new Error("Wallet already added");
+  }
+  db.data.mintWallets.push({ address: address.toLowerCase(), encryptedPk });
+  await db.write();
+}
+
+export async function removeMintWallet(address) {
+  if (!db.data.mintWallets) return;
+  db.data.mintWallets = db.data.mintWallets.filter(
+    w => w.address.toLowerCase() !== address.toLowerCase()
+  );
+  await db.write();
+}
+
+export function getMintWallets() {
+  return db.data.mintWallets || [];
 }
 
 // --- Groups ---
