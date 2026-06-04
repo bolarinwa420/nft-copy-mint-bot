@@ -38,14 +38,34 @@ let wsProvider = null;
 let lastBlockAt = Date.now();
 let watchdogTimer = null;
 let reconnecting = false;
+let txsScanned = 0;
+let blocksScanned = 0;
 
 function processBlock(block) {
-  if (!block?.transactions?.length) return;
+  if (!block) return;
+
+  // ethers v6: block.transactions is an array of HASH STRINGS. The full tx
+  // objects (with .from/.to/.data) live on block.prefetchedTransactions when
+  // the block was fetched with prefetch=true. Iterating block.transactions
+  // gives strings → tx.from is undefined → every mint silently skipped.
+  let txs = [];
+  try {
+    txs = block.prefetchedTransactions || [];
+  } catch (_) {
+    txs = [];
+  }
+  // Fallback: some providers return full objects directly on .transactions
+  if (!txs.length && Array.isArray(block.transactions) && typeof block.transactions[0] === "object") {
+    txs = block.transactions;
+  }
+  if (!txs.length) return;
 
   const tracked = new Set(getTracked().map(a => a.toLowerCase()));
   lastBlockAt = Date.now();
+  blocksScanned++;
+  txsScanned += txs.length;
 
-  for (const tx of block.transactions) {
+  for (const tx of txs) {
     if (!tx?.from || !tx?.to) continue;
     const from = tx.from.toLowerCase();
     const to   = tx.to.toLowerCase();
@@ -134,7 +154,7 @@ function startWatchdog() {
       console.warn(`[BlockScanner] Watchdog: no blocks in ${staleSec}s — reconnecting`);
       scheduleReconnect();
     } else {
-      console.log(`[BlockScanner] Watchdog OK — last block ${staleSec}s ago`);
+      console.log(`[BlockScanner] Watchdog OK — last block ${staleSec}s ago, scanned ${blocksScanned} blocks / ${txsScanned} txs (tracking ${getTracked().length} whales)`);
     }
   }, 3 * 60 * 1000);
 }
