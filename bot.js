@@ -19,7 +19,8 @@ import { initMintFloorTracker } from "./mintFloorTracker.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { analyzeLink, classifyMintType, findAvailableTokenIds } from "./linkAnalyzer.js";
-import { inspectMint, buildAllowlistCalldata, getAllowlistProof } from "./mintInspector.js";
+import { inspectMint, buildAllowlistCalldata, getAllowlistProof, phaseStatus, fmtUTC, humanDuration } from "./mintInspector.js";
+import { initSniper, scheduleSnipe, listSnipes, cancelSnipe } from "./sniper.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
@@ -130,6 +131,7 @@ setIdSelectionFn(askIdSelection);
 
 initScheduler(notify);
 initWatcher(provider, notify);
+initSniper(provider, notify);
 initPriceAlerts(notify);
 initSweepWatcher(notify);
 initDailyDigest(notify);
@@ -1627,7 +1629,6 @@ bot.command("inspect", async (ctx) => {
   }
 
   const id = Math.random().toString(36).slice(2, 10);
-  pendingInspect.set(id, { ...report, qualified, qty: 1 });
   setTimeout(() => pendingInspect.delete(id), 15 * 60 * 1000);
 
   // Build the report card
@@ -1650,6 +1651,22 @@ bot.command("inspect", async (ctx) => {
   if (report.publicSig) card += `\nPublic fn: \`${report.publicSig}\``;
   if (report.allowlistSig) card += `\nAllowlist fn: \`${report.allowlistSig}\``;
 
+  // SeaDrop on-chain schedule (Proof-style: exact price + open times, works pre-launch)
+  const sd = report.seadrop;
+  let snipeStart = null;
+  if (sd?.isSeadrop && sd.public) {
+    const st = phaseStatus(sd.public.startTime, sd.public.endTime);
+    const dot = st.state === "live" ? "🟢" : st.state === "ended" ? "⚫" : "🔵";
+    const priceStr = sd.public.price === "0" ? "FREE" : `${sd.public.price} ETH`;
+    card += `\n\n📅 *OpenSea Drop Schedule*\n` +
+      `${dot} PUBLIC — ${priceStr} · ${st.label}`;
+    if (sd.public.startTime) card += `\n   ⏰ ${fmtUTC(sd.public.startTime)}`;
+    if (sd.public.maxPerWallet) card += ` · max ${sd.public.maxPerWallet}/wallet`;
+    if (sd.allowlist) card += `\n⚪ ALLOWLIST — merkle root set (signed mint via OpenSea)`;
+    if (st.state === "upcoming") snipeStart = sd.public.startTime;
+    if (st.state === "live") snipeStart = sd.public.startTime; // allow instant fire too
+  }
+
   if (inspectWallets().length === 0) {
     card += `\n\n⚠️ *Mint pool is empty* — add wallets with /addmintwallet before you can fire.`;
   } else {
@@ -1666,8 +1683,14 @@ bot.command("inspect", async (ctx) => {
     }
   }
 
+  // Stash everything the buttons need (incl. the snipe start time)
+  pendingInspect.set(id, { ...report, qualified, qty: 1, snipeStart });
+
   // Buttons
   const kb = new InlineKeyboard();
+  if (snipeStart) {
+    kb.text("🚀 Mint the moment it opens", `insp_snipe_${id}`).row();
+  }
   if (report.publicMintFn) {
     kb.text("🌐 Public ×1", `insp_pub_${id}_1`).text("🌐 Public ×3", `insp_pub_${id}_3`).row();
   }
@@ -1683,6 +1706,37 @@ bot.callbackQuery(/^insp_cancel_(.+)$/, async (ctx) => {
   pendingInspect.delete(ctx.match[1]);
   await ctx.answerCallbackQuery("Cancelled.");
   await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+});
+
+// Mint the moment it opens — arm a SeaDrop snipe at the public-phase start time
+bot.callbackQuery(/^insp_snipe_(.+)$/, async (ctx) => {
+  const job = pendingInspect.get(ctx.match[1]);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired — run /inspect again.");
+  if (!job.snipeStart) return ctx.answerCallbackQuery("❌ No open time to snipe.");
+  if (inspectWallets().length === 0) return ctx.answerCallbackQuery("❌ Mint pool empty — /addmintwallet first.");
+  await ctx.answerCallbackQuery("Arming snipe...");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+
+  try {
+    const snipe = await scheduleSnipe({
+      nftContract: job.contract,
+      qty: 1,
+      startTime: job.snipeStart,
+      label: job.contract.slice(0, 10),
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const when = snipe.startTime > now ? `in ${humanDuration(snipe.startTime - now)} (${fmtUTC(snipe.startTime)})` : "now";
+    await ctx.reply(
+      `🎯 *Snipe armed!*\n\n` +
+      `Contract: \`${job.contract}\`\n` +
+      `Fires: ${when}\n` +
+      `From: ${inspectWallets().length} mint-pool wallets\n\n` +
+      `I'll poll fast near the open and fire the instant it's live. View with /snipes.`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Couldn't arm snipe: ${err.message}`);
+  }
 });
 
 // Public mint: insp_pub_<id>_<qty>
@@ -1811,6 +1865,43 @@ bot.command("removemintwallet", async (ctx) => {
   }
   await removeMintWallet(addr);
   await ctx.reply(`🗑 Removed \`${addr}\` from the mint pool. Now ${listMintWallets().length}/20.`, { parse_mode: "Markdown" });
+});
+
+// ─── /mint — friendly entry point ────────────────────────────────────────────
+
+bot.command("mint", async (ctx) => {
+  await ctx.reply(
+    `🏗 *Mint*\n\n` +
+    `Just paste an *OpenSea link* or *contract address* and I'll figure it out — read the drop, ` +
+    `detect public vs allowlist, pull the schedule, and let you fire or snipe.\n\n` +
+    `• *OpenSea / SeaDrop drop* — I read the on-chain schedule (price + exact open time) and can ` +
+    `🚀 *mint the moment it opens*.\n` +
+    `• *Custom contract or mint site* — paste the URL; I deep-read it for the contract + merkle proof.\n` +
+    `• *Allowlist* — paste the mint-site URL so I can find your proof.\n\n` +
+    `➡️ Send: \`/inspect <link-or-contract>\`\n` +
+    `🎯 Mint pool: ${listMintWallets().length}/20 · /mintwallets to manage · /snipes for armed snipes`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.command("snipes", async (ctx) => {
+  const snipes = listSnipes();
+  if (snipes.length === 0) {
+    return ctx.reply("🎯 No armed snipes. Run /inspect on an upcoming OpenSea drop and tap *Mint the moment it opens*.", { parse_mode: "Markdown" });
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const lines = snipes.map((s) => {
+    const when = s.startTime > now ? `opens in ${humanDuration(s.startTime - now)}` : "live window";
+    return `• \`${s.nftContract}\`\n   ${s.status} · ${when} · ${fmtUTC(s.startTime)}\n   cancel: /cancelsnipe ${s.id}`;
+  }).join("\n");
+  await ctx.reply(`🎯 *Armed Snipes (${snipes.length})*\n\n${lines}`, { parse_mode: "Markdown" });
+});
+
+bot.command("cancelsnipe", async (ctx) => {
+  const id = ctx.match?.trim();
+  if (!id) return ctx.reply("Usage: `/cancelsnipe <id>` (see /snipes)", { parse_mode: "Markdown" });
+  await cancelSnipe(id);
+  await ctx.reply(`🛑 Snipe \`${id}\` cancelled.`, { parse_mode: "Markdown" });
 });
 
 // ─── Decode Contract ──────────────────────────────────────────────────────────
@@ -3230,7 +3321,9 @@ bot.start({
       { command: "mint",            description: "Fire a manual mint now" },
       { command: "mintca",          description: "Auto-detect mint fn + price from contract ABI, then mint" },
       { command: "analyzelink",     description: "Paste a mint site URL — bot finds contract + mints automatically" },
-      { command: "inspect",         description: "Paste link/CA → detect public vs allowlist phase + pull proof, then mint" },
+      { command: "mint",            description: "Mint entry point — paste an OpenSea link or contract" },
+      { command: "inspect",         description: "Paste link/CA → detect phase + schedule + proof, then mint or snipe" },
+      { command: "snipes",          description: "View armed 'mint the moment it opens' snipes" },
       { command: "mintwallets",     description: "List the dedicated /inspect mint pool (max 20)" },
       { command: "addmintwallet",   description: "Add a wallet to the mint pool (paste its private key)" },
       { command: "removemintwallet", description: "Remove a wallet from the mint pool" },

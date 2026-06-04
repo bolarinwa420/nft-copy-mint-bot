@@ -15,6 +15,7 @@ const defaultData = {
     allowFreeMints: true, // whether to auto-mint free (0 ETH) mints
   },
   jobs: [],          // scheduled mints
+  snipes: [],        // SeaDrop "mint the moment it opens" snipes: [{ id, nftContract, qty, startTime, status }]
   mintLog: [],       // [{ contract, wallet, txHash, ethSpent, timestamp }]
   watches: [],       // drop watchers: [{ id, nftContract, group, calldata, active, createdAt }]
   priceAlerts: [],   // floor price alerts: [{ id, contract, targetPrice, lastFiredAt, createdAt }]
@@ -167,6 +168,30 @@ export async function updateJobStatus(id, status) {
 
 export function getJobs() {
   return db.data.jobs;
+}
+
+// --- Snipes (mint-the-moment-it-opens) ---
+
+export async function addSnipe(snipe) {
+  if (!db.data.snipes) db.data.snipes = [];
+  db.data.snipes.push(snipe);
+  await db.write();
+}
+
+export async function updateSnipe(id, patch) {
+  if (!db.data.snipes) return;
+  const s = db.data.snipes.find(s => s.id === id);
+  if (s) { Object.assign(s, patch); await db.write(); }
+}
+
+export async function removeSnipe(id) {
+  if (!db.data.snipes) return;
+  db.data.snipes = db.data.snipes.filter(s => s.id !== id);
+  await db.write();
+}
+
+export function getSnipes() {
+  return db.data.snipes || [];
 }
 
 // --- Contract Filters ---

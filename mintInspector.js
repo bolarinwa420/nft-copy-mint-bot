@@ -15,6 +15,71 @@ const ERC721_ID = "0x80ac58cd";
 const ERC1155_ID = "0xd9b67a26";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+// OpenSea SeaDrop router — stores the drop schedule (price + start/end times) on-chain, readable pre-launch
+export const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
+const SEADROP_SCHEDULE_ABI = [
+  "function getPublicDrop(address) view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))",
+  "function getAllowListMerkleRoot(address) view returns (bytes32)",
+];
+
+// ─── SeaDrop drop schedule (the Proof-style phase card) ──────────────────────
+
+// Read the public + allowlist schedule straight from the SeaDrop router. Works before the sale opens.
+export async function readSeadropSchedule(provider, nftContract) {
+  const c = new ethers.Contract(SEADROP_ADDRESS, SEADROP_SCHEDULE_ABI, provider);
+  const out = { isSeadrop: false, public: null, allowlist: null };
+
+  try {
+    const d = await c.getPublicDrop(nftContract);
+    const startTime = Number(d.startTime);
+    const endTime = Number(d.endTime);
+    if (startTime > 0 || endTime > 0 || d.mintPrice > 0n) {
+      out.isSeadrop = true;
+      out.public = {
+        price: ethers.formatEther(d.mintPrice),
+        startTime,
+        endTime,
+        maxPerWallet: Number(d.maxTotalMintableByWallet),
+      };
+    }
+  } catch {}
+
+  try {
+    const root = await c.getAllowListMerkleRoot(nftContract);
+    if (root && root !== ethers.ZeroHash) {
+      out.isSeadrop = true;
+      out.allowlist = { merkleRoot: root };
+    }
+  } catch {}
+
+  return out;
+}
+
+// Human status for a phase window. now = unix seconds.
+export function phaseStatus(startTime, endTime, now = Math.floor(Date.now() / 1000)) {
+  if (!startTime) return { state: "unknown", label: "time unknown" };
+  if (now < startTime) return { state: "upcoming", label: `opens in ${humanDuration(startTime - now)}`, opensAt: startTime };
+  if (endTime && now > endTime) return { state: "ended", label: "ended" };
+  return { state: "live", label: "🟢 LIVE NOW", endsAt: endTime };
+}
+
+export function humanDuration(secs) {
+  if (secs < 0) secs = 0;
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+export function fmtUTC(unixSecs) {
+  if (!unixSecs) return "—";
+  return new Date(unixSecs * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+}
+
 // ─── Input classification ───────────────────────────────────────────────────
 
 // Turn whatever the user pasted into { kind, contract?, url?, origin? }
@@ -441,6 +506,9 @@ export async function inspectMint(input, provider, opts = {}) {
   const phases = await detectPhases(provider, contract, abi, publicPrice);
   const isNFT = await isNFTContract(provider, contract);
 
+  // SeaDrop on-chain schedule (price + exact start/end times — works pre-launch, Proof-style)
+  const seadrop = await readSeadropSchedule(provider, contract);
+
   // Allowlist sources (only if we read a site)
   let allowlistSources = { apiPaths: [], jsonPaths: [] };
   if (siteBlob) allowlistSources = findAllowlistSources(siteBlob.combined, origin);
@@ -457,6 +525,7 @@ export async function inspectMint(input, provider, opts = {}) {
     allowlistMintFn: allowFn,
     allowlistSig: allowFn ? mintFnSignature(allowFn) : null,
     phases,
+    seadrop,
     allowlistSources,
     origin,
     allFound,
