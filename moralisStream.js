@@ -149,11 +149,26 @@ export async function initMoralisStream() {
   }
 }
 
+// Webhook base URL. Prefer explicit WEBHOOK_URL, but fall back to Railway's
+// auto-injected RAILWAY_PUBLIC_DOMAIN — which always tracks the CURRENT domain.
+// A stale webhook URL (from domain rotation) is the #1 cause of a dead stream.
+function getWebhookUrl() {
+  let base = process.env.WEBHOOK_URL;
+  if (!base && process.env.RAILWAY_PUBLIC_DOMAIN) {
+    base = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  }
+  if (!base) return null;
+  return `${base.replace(/\/+$/, "")}/webhook`;
+}
+
 async function setupStream() {
   const db = getDb();
   // MORALIS_STREAM_ID env var bypasses stream creation — use when C0006 blocks auto-create
   streamId = process.env.MORALIS_STREAM_ID || db.data.moralisStreamId || null;
-  const webhookUrl = `${process.env.WEBHOOK_URL}/webhook`;
+  const webhookUrl = getWebhookUrl();
+  if (!webhookUrl) {
+    throw new Error("No WEBHOOK_URL or RAILWAY_PUBLIC_DOMAIN set — cannot configure Moralis webhook");
+  }
   const tracked = getTracked();
 
   if (process.env.MORALIS_STREAM_ID && !db.data.moralisStreamId) {
@@ -161,24 +176,46 @@ async function setupStream() {
     await db.write();
   }
 
+  const streamConfig = {
+    chains: ["0x1"], // Ethereum mainnet
+    description: "NFT mint bot — whale tracker",
+    tag: "whale-mints",
+    webhookUrl,
+    includeNativeTxs: true,
+  };
+
   if (!streamId) {
     console.log(`[MoralisStream] Creating new stream → ${webhookUrl}`);
-    const stream = await Moralis.Streams.add({
-      chains: ["0x1"], // Ethereum mainnet
-      description: "NFT mint bot — whale tracker",
-      tag: "whale-mints",
-      webhookUrl,
-      includeNativeTxs: true,
-    });
+    const stream = await Moralis.Streams.add(streamConfig);
     streamId = stream.id;
     db.data.moralisStreamId = streamId;
     await db.write();
     console.log(`[MoralisStream] Stream created: ${streamId}`);
-  } else if (process.env.MORALIS_STREAM_ID) {
-    console.log(`[MoralisStream] Using pre-set stream from env: ${streamId}`);
   } else {
-    console.log(`[MoralisStream] Reusing stream from db: ${streamId}`);
+    // Reusing an existing stream — REPAIR it on every boot:
+    //  1. re-point the webhook at the current URL (heals domain rotation)
+    //  2. force status back to ACTIVE (Moralis auto-pauses after repeated webhook failures)
+    console.log(`[MoralisStream] Reusing stream ${streamId} — re-syncing webhook + status`);
+    try {
+      await Moralis.Streams.update({ id: streamId, ...streamConfig });
+      console.log(`[MoralisStream] Webhook URL synced → ${webhookUrl}`);
+    } catch (e) {
+      console.warn(`[MoralisStream] Stream update failed: ${e.message}`);
+    }
+    try {
+      await Moralis.Streams.updateStatus({ id: streamId, status: "active" });
+      console.log(`[MoralisStream] Stream status forced → active`);
+    } catch (e) {
+      console.warn(`[MoralisStream] Status reactivate failed: ${e.message}`);
+    }
   }
+
+  // Log the live stream status so the boot logs show whether it's actually active
+  try {
+    const info = await Moralis.Streams.getById({ id: streamId });
+    const status = info?.toJSON?.()?.status || info?.result?.status || "unknown";
+    console.log(`[MoralisStream] Stream status: ${status}`);
+  } catch (_) {}
 
   // Add tracked addresses + TMA wallet in batches of 50 (Moralis limit per call)
   const addresses = [...new Set([...tracked, TMA_WALLET])];

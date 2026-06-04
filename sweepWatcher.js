@@ -29,20 +29,22 @@ export function initSweepWatcher(notify) {
   console.log("[SweepWatcher] Polling started (eth_getLogs, 2 min interval)");
 }
 
-async function getTransfersSince(wallet, fromBlock) {
+// publicnode (and most public RPCs) cap eth_getLogs at 50000 blocks per query.
+const MAX_BLOCK_RANGE = 45000;
+
+async function getTransfersSince(wallet, fromBlock, toBlock) {
   const paddedTo = padAddress(wallet);
-  const from = fromBlock || "latest";
 
   const [erc721Logs, erc1155Logs] = await Promise.all([
     provider.getLogs({
       topics: [ERC721_TRANSFER, null, paddedTo],
-      fromBlock: from,
-      toBlock: "latest",
+      fromBlock,
+      toBlock,
     }),
     provider.getLogs({
       topics: [ERC1155_SINGLE, null, null, paddedTo],
-      fromBlock: from,
-      toBlock: "latest",
+      fromBlock,
+      toBlock,
     }),
   ]);
 
@@ -60,17 +62,33 @@ async function poll() {
 
   const now = Date.now();
 
+  let latest;
+  try {
+    latest = await provider.getBlockNumber();
+  } catch (err) {
+    console.error(`[SweepWatcher] Could not get latest block: ${err.message}`);
+    return;
+  }
+
   for (const watcher of watchers) {
     const wallet    = watcher.wallet.toLowerCase();
     const threshold = watcher.threshold || 3;
 
     try {
-      const transfers = await getTransfersSince(wallet, watcher.lastBlock);
-      if (!transfers.length) continue;
+      // Start from the stored cursor, but never request more than MAX_BLOCK_RANGE
+      // (a stale/old cursor would otherwise blow past the RPC's getLogs limit and
+      // fail forever, never advancing). Default to a recent window on first run.
+      let fromBlock = watcher.lastBlock ? parseInt(watcher.lastBlock, 16) : latest - MAX_BLOCK_RANGE;
+      if (fromBlock > latest) fromBlock = latest;
+      if (latest - fromBlock > MAX_BLOCK_RANGE) fromBlock = latest - MAX_BLOCK_RANGE;
 
-      // Advance block cursor
-      const maxBlock = Math.max(...transfers.map(t => t.blockNumber));
-      await updateSweepWatcher(watcher.id, { lastBlock: "0x" + (maxBlock + 1).toString(16) });
+      const transfers = await getTransfersSince(wallet, fromBlock, latest);
+
+      // Always advance the cursor to the block we just scanned through — even
+      // when there were no transfers — so the range can never grow unbounded.
+      await updateSweepWatcher(watcher.id, { lastBlock: "0x" + (latest + 1).toString(16) });
+
+      if (!transfers.length) continue;
 
       // Add new transfers into rolling window
       if (!windowData.has(wallet)) windowData.set(wallet, new Map());

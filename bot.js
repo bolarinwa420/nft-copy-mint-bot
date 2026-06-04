@@ -36,7 +36,6 @@ import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
 import { initBlockScanner } from "./blockScanner.js";
 import { initDaemonSniper, runDaemonSnipe, runDaemonWrap, detectPool, detectTax, detectWrapFunction, addSnipeWallet, removeSnipeWallet, clearSnipeWallets, getSnipeWalletAddresses } from "./daemonSniper.js";
-import { initTwitterWatcher, getTwitterWatcherStatus } from "./twitterWatcher.js";
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -158,7 +157,6 @@ initSeadropDetector(notify);
 initNewCollectionWatcher(notify);
 initMintFloorTracker(notify);
 initDaemonSniper(provider, mainSigner);
-initTwitterWatcher(notify);
 startWatcher();
 if (!process.env.MORALIS_API_KEY) await startTracking();
 // Block scanner runs always — catches every whale mint regardless of Moralis stream status
@@ -3412,22 +3410,6 @@ bot.callbackQuery("jobs_back", async (ctx) => {
   );
 });
 
-// ─── Twitter Watcher ─────────────────────────────────────────────────────────
-
-bot.command("twitterstatus", async (ctx) => {
-  const s = getTwitterWatcherStatus();
-  const icon = s.initialized ? "🟢" : "🟡";
-  await ctx.reply(
-    `${icon} *Twitter Watcher*\n\n` +
-    `Handle: @${s.handle}\n` +
-    `Status: ${s.initialized ? "Active" : "Initializing..."}\n` +
-    `Tweets seen: ${s.seenCount}\n` +
-    `Active Nitter: \`${s.activeInstance}\`\n` +
-    `Poll interval: every ${s.pollIntervalSec}s`,
-    { parse_mode: "Markdown" }
-  );
-});
-
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 console.log(`[Bot] Starting — Main wallet: ${MAIN_ADDRESS}`);
@@ -3508,7 +3490,6 @@ bot.start({
       { command: "daemoncheck",     description: "Pre-launch check: pool type, tax rate, wrap fn" },
       // Settings
       { command: "setalertchat",    description: "Set this chat as the alert channel" },
-      { command: "twitterstatus",   description: "Twitter watcher status (@CAONHTAN1)" },
       // Sweep watcher
       { command: "watchsweep",      description: "Alert when a wallet sweeps a collection" },
       { command: "sweepwatches",    description: "List active sweep watchers" },
