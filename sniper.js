@@ -5,8 +5,8 @@
 // the window is live. Snipes persist in storage so a Railway restart re-arms them.
 
 import { ethers } from "ethers";
-import { readSeadropSchedule, SEADROP_ADDRESS } from "./mintInspector.js";
-import { executeManualMint } from "./copymint.js";
+import { readSeadropSchedule, SEADROP_ADDRESS, buildMintAllowListCalldata } from "./mintInspector.js";
+import { executeManualMint, executePerWalletMint } from "./copymint.js";
 import { getMintSigners } from "./wallets.js";
 import { addSnipe, getSnipes, updateSnipe } from "./storage.js";
 
@@ -37,14 +37,19 @@ function buildMintPublicCalldata(nftContract, qty) {
   ]);
 }
 
-// Public API: arm a snipe for a SeaDrop public drop.
-export async function scheduleSnipe({ nftContract, qty = 1, startTime, label }) {
+// Public API: arm a snipe.
+//   mode "public"    → fires mintPublic when the SeaDrop public window goes live
+//   mode "allowlist" → fires mintAllowList per-wallet at startTime; needs feeRecipient + entries{addr:{mintParams,proof}}
+export async function scheduleSnipe({ nftContract, qty = 1, startTime, label, mode = "public", feeRecipient, entries }) {
   const snipe = {
     id: Math.random().toString(36).slice(2, 10),
     nftContract: ethers.getAddress(nftContract),
     qty: Math.max(1, qty),
     startTime, // unix seconds
     label: label || nftContract.slice(0, 10),
+    mode,
+    feeRecipient: feeRecipient || null,
+    entries: entries || null, // { "0xaddr": { mintParams:[8], proof:[...] } }
     status: "armed",
     createdAt: Date.now(),
   };
@@ -77,20 +82,70 @@ async function beginPolling(snipe) {
       return;
     }
 
-    let sched = null;
-    try { sched = await readSeadropSchedule(provider, snipe.nftContract); } catch {}
-    const pub = sched?.public;
     const now = Math.floor(Date.now() / 1000);
 
-    if (pub && pub.startTime > 0 && now >= pub.startTime && (!pub.endTime || now <= pub.endTime)) {
-      timers.delete(snipe.id);
-      await fire(snipe, pub);
-      return;
+    if (snipe.mode === "allowlist") {
+      // Allowlist times live in mintParams; fire as soon as the stage start is reached
+      if (now >= snipe.startTime) {
+        timers.delete(snipe.id);
+        await fireAllowlist(snipe);
+        return;
+      }
+    } else {
+      let sched = null;
+      try { sched = await readSeadropSchedule(provider, snipe.nftContract); } catch {}
+      const pub = sched?.public;
+      if (pub && pub.startTime > 0 && now >= pub.startTime && (!pub.endTime || now <= pub.endTime)) {
+        timers.delete(snipe.id);
+        await fire(snipe, pub);
+        return;
+      }
     }
     timers.set(snipe.id, setTimeout(tick, POLL_MS));
   };
 
   await tick();
+}
+
+async function fireAllowlist(snipe) {
+  await updateSnipe(snipe.id, { status: "firing" });
+  const signers = getMintSigners(provider).filter((s) => snipe.entries?.[s.address.toLowerCase()]);
+  if (signers.length === 0) {
+    await updateSnipe(snipe.id, { status: "failed" });
+    return notifyFn(`❌ *Allowlist snipe failed* — none of your mint-pool wallets are on the allowlist.`);
+  }
+
+  // All addresses in a stage share the same price; read it from any entry
+  const sample = snipe.entries[signers[0].address.toLowerCase()];
+  const priceWei = BigInt(sample.mintParams[0]);
+  const totalValue = ethers.formatEther(priceWei * BigInt(snipe.qty));
+
+  const calldataFn = (address) => {
+    const e = snipe.entries[address.toLowerCase()];
+    if (!e) return null;
+    return buildMintAllowListCalldata(
+      snipe.nftContract, snipe.feeRecipient, ethers.ZeroAddress, snipe.qty, e.mintParams, e.proof
+    );
+  };
+
+  await notifyFn(
+    `🚨 *${snipe.label} allowlist is LIVE — sniping now!*\n\n` +
+    `Contract: \`${snipe.nftContract}\`\n` +
+    `Price: ${priceWei === 0n ? "FREE" : `${ethers.formatEther(priceWei)} ETH`} × ${snipe.qty}\n` +
+    `Qualifying wallets: ${signers.length}\n\n_Firing..._`
+  );
+
+  try {
+    const r = await executePerWalletMint(SEADROP_ADDRESS, calldataFn, totalValue, null, { signers });
+    await updateSnipe(snipe.id, { status: "done" });
+    await notifyFn(
+      `✅ *Allowlist snipe complete — ${snipe.label}*\n\n` +
+      `✅ Succeeded: ${r.succeeded}\n❌ Failed: ${r.failed}\n⏭️ Skipped: ${r.skipped}\n📊 Wallets: ${r.total}`
+    );
+  } catch (err) {
+    await updateSnipe(snipe.id, { status: "failed" });
+    await notifyFn(`❌ *Allowlist snipe failed* — ${err.message}`);
+  }
 }
 
 async function fire(snipe, pub) {

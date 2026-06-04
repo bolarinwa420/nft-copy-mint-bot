@@ -19,7 +19,9 @@ import { initMintFloorTracker } from "./mintFloorTracker.js";
 import { getContractInfo, massListNFTs } from "./listing.js";
 import { fetchABI, findBestMintFn, readMintPrice, buildMintCalldata, mintFnSignature } from "./contractMinter.js";
 import { analyzeLink, classifyMintType, findAvailableTokenIds } from "./linkAnalyzer.js";
-import { inspectMint, buildAllowlistCalldata, getAllowlistProof, phaseStatus, fmtUTC, humanDuration } from "./mintInspector.js";
+import { inspectMint, buildAllowlistCalldata, getAllowlistProof, phaseStatus, fmtUTC, humanDuration, resolveSeadropAllowlistBatch } from "./mintInspector.js";
+
+const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
 import { initSniper, scheduleSnipe, listSnipes, cancelSnipe } from "./sniper.js";
 import { WHALE_SEED } from "./whale-meta.js";
 import { v4 as uuidv4 } from "uuid";
@@ -1653,7 +1655,8 @@ bot.command("inspect", async (ctx) => {
 
   // SeaDrop on-chain schedule (Proof-style: exact price + open times, works pre-launch)
   const sd = report.seadrop;
-  let snipeStart = null;
+  let snipeStart = null;        // public-phase snipe target
+  let alSnipe = null;           // allowlist snipe payload { startTime, entries, feeRecipient, price }
   if (sd?.isSeadrop && sd.public) {
     const st = phaseStatus(sd.public.startTime, sd.public.endTime);
     const dot = st.state === "live" ? "🟢" : st.state === "ended" ? "⚫" : "🔵";
@@ -1662,9 +1665,40 @@ bot.command("inspect", async (ctx) => {
       `${dot} PUBLIC — ${priceStr} · ${st.label}`;
     if (sd.public.startTime) card += `\n   ⏰ ${fmtUTC(sd.public.startTime)}`;
     if (sd.public.maxPerWallet) card += ` · max ${sd.public.maxPerWallet}/wallet`;
-    if (sd.allowlist) card += `\n⚪ ALLOWLIST — merkle root set (signed mint via OpenSea)`;
-    if (st.state === "upcoming") snipeStart = sd.public.startTime;
-    if (st.state === "live") snipeStart = sd.public.startTime; // allow instant fire too
+    if (st.state !== "ended") snipeStart = sd.public.startTime;
+  }
+
+  // SeaDrop allowlist (mintAllowList) — resolve the merkle proof + mintParams for the pool wallets
+  if (sd?.isSeadrop && sd.allowlist && inspectWallets().length > 0) {
+    await ctx.reply(`🌳 Allowlist (merkle) detected — fetching the on-chain allowlist + your proofs...`);
+    let res;
+    try {
+      res = await resolveSeadropAllowlistBatch(getAlchemy(), report.contract, inspectWallets());
+    } catch (err) {
+      res = { error: "exception", entries: {} };
+    }
+    const n = Object.keys(res.entries || {}).length;
+    if (n > 0) {
+      const mp = res.mintParams; // [price, maxPerWallet, start, end, ...]
+      const alStart = Number(mp[2]);
+      const alEnd = Number(mp[3]);
+      const alPriceEth = ethers.formatEther(BigInt(mp[0]));
+      const ast = phaseStatus(alStart, alEnd);
+      const adot = ast.state === "live" ? "🟢" : ast.state === "ended" ? "⚫" : "⚪";
+      card += `\n${adot} ALLOWLIST — ${alPriceEth === "0.0" ? "FREE" : `${alPriceEth} ETH`} · ${ast.label}`;
+      if (alStart) card += `\n   ⏰ ${fmtUTC(alStart)} · ✅ ${n}/${inspectWallets().length} wallets qualify`;
+      if (ast.state !== "ended") {
+        alSnipe = { startTime: alStart, entries: res.entries, feeRecipient: OPENSEA_FEE_RECIPIENT, price: alPriceEth };
+      }
+    } else {
+      const why = res.error === "encrypted" ? "OpenSea-encrypted (grab proof from OS UI)"
+        : res.error === "not_on_list" ? "none of your wallets are on it"
+        : res.error === "no_uri" ? "no public allowlist URI found"
+        : "couldn't fetch the allowlist";
+      card += `\n⚪ ALLOWLIST — merkle root set, but ${why}`;
+    }
+  } else if (sd?.allowlist) {
+    card += `\n⚪ ALLOWLIST — merkle root set (add mint-pool wallets to check your proofs)`;
   }
 
   if (inspectWallets().length === 0) {
@@ -1683,13 +1717,16 @@ bot.command("inspect", async (ctx) => {
     }
   }
 
-  // Stash everything the buttons need (incl. the snipe start time)
-  pendingInspect.set(id, { ...report, qualified, qty: 1, snipeStart });
+  // Stash everything the buttons need (incl. the snipe start times)
+  pendingInspect.set(id, { ...report, qualified, qty: 1, snipeStart, alSnipe });
 
   // Buttons
   const kb = new InlineKeyboard();
   if (snipeStart) {
-    kb.text("🚀 Mint the moment it opens", `insp_snipe_${id}`).row();
+    kb.text("🚀 Snipe public open", `insp_snipe_${id}`).row();
+  }
+  if (alSnipe) {
+    kb.text("🌳 Snipe allowlist open", `insp_alsnipe_${id}`).row();
   }
   if (report.publicMintFn) {
     kb.text("🌐 Public ×1", `insp_pub_${id}_1`).text("🌐 Public ×3", `insp_pub_${id}_3`).row();
@@ -1736,6 +1773,41 @@ bot.callbackQuery(/^insp_snipe_(.+)$/, async (ctx) => {
     );
   } catch (err) {
     await ctx.reply(`❌ Couldn't arm snipe: ${err.message}`);
+  }
+});
+
+// Snipe the allowlist (mintAllowList) open — fires per-wallet with each wallet's proof
+bot.callbackQuery(/^insp_alsnipe_(.+)$/, async (ctx) => {
+  const job = pendingInspect.get(ctx.match[1]);
+  if (!job) return ctx.answerCallbackQuery("❌ Expired — run /inspect again.");
+  if (!job.alSnipe) return ctx.answerCallbackQuery("❌ No allowlist to snipe.");
+  await ctx.answerCallbackQuery("Arming allowlist snipe...");
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+
+  try {
+    const snipe = await scheduleSnipe({
+      nftContract: job.contract,
+      qty: 1,
+      startTime: job.alSnipe.startTime,
+      label: `${job.contract.slice(0, 8)} AL`,
+      mode: "allowlist",
+      feeRecipient: job.alSnipe.feeRecipient,
+      entries: job.alSnipe.entries,
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const when = snipe.startTime > now ? `in ${humanDuration(snipe.startTime - now)} (${fmtUTC(snipe.startTime)})` : "now";
+    const qn = Object.keys(job.alSnipe.entries).length;
+    await ctx.reply(
+      `🌳 *Allowlist snipe armed!*\n\n` +
+      `Contract: \`${job.contract}\`\n` +
+      `Fires: ${when}\n` +
+      `Qualifying wallets: ${qn}\n` +
+      `Price: ${job.alSnipe.price} ETH\n\n` +
+      `Each wallet fires with its own merkle proof the instant the allowlist opens. /snipes to view.`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Couldn't arm allowlist snipe: ${err.message}`);
   }
 });
 

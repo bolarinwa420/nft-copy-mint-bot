@@ -22,6 +22,173 @@ const SEADROP_SCHEDULE_ABI = [
   "function getAllowListMerkleRoot(address) view returns (bytes32)",
 ];
 
+// ─── SeaDrop allowlist (mintAllowList — merkle, forgeable) ───────────────────
+
+const SEADROP_ALLOWLIST_EVENT_ABI = [
+  "event AllowListUpdated(address indexed nftContract, bytes32 indexed previousMerkleRoot, bytes32 indexed newMerkleRoot, string[] publicKeyURIs, string allowListURI)",
+];
+
+// SeaDrop MintParams struct — appears in the leaf and in the mintAllowList call
+export const MINTPARAMS_TUPLE =
+  "tuple(uint256 mintPrice, uint256 maxTotalMintableByWallet, uint256 startTime, uint256 endTime, uint256 dropStageIndex, uint256 maxTokenSupplyForStage, uint256 feeBps, bool restrictFeeRecipients)";
+
+const MP_FIELDS = [
+  "mintPrice", "maxTotalMintableByWallet", "startTime", "endTime",
+  "dropStageIndex", "maxTokenSupplyForStage", "feeBps", "restrictFeeRecipients",
+];
+
+// Accept an array or a named object; return the ordered array ethers needs.
+export function normalizeMintParams(mp) {
+  if (Array.isArray(mp)) return mp;
+  if (mp && typeof mp === "object") return MP_FIELDS.map((k) => mp[k]);
+  return null;
+}
+
+// SeaDrop leaf: keccak256(abi.encode(minter, mintParams)) — single hash, sorted-pair tree
+export function seadropLeaf(minter, mintParams) {
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const encoded = coder.encode(
+    ["address", MINTPARAMS_TUPLE],
+    [ethers.getAddress(minter), normalizeMintParams(mintParams)]
+  );
+  return ethers.keccak256(encoded);
+}
+
+export function buildMintAllowListCalldata(nftContract, feeRecipient, minterIfNotPayer, qty, mintParams, proof) {
+  const iface = new ethers.Interface([
+    `function mintAllowList(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity, ${MINTPARAMS_TUPLE} mintParams, bytes32[] proof) payable`,
+  ]);
+  return iface.encodeFunctionData("mintAllowList", [
+    nftContract, feeRecipient, minterIfNotPayer, qty, normalizeMintParams(mintParams), proof,
+  ]);
+}
+
+// Find the latest allowListURI for a contract from the SeaDrop AllowListUpdated event.
+export async function getSeadropAllowListURI(alchemy, nftContract) {
+  const iface = new ethers.Interface(SEADROP_ALLOWLIST_EVENT_ABI);
+  const ev = iface.getEvent("AllowListUpdated");
+  const nftTopic = ethers.zeroPadValue(ethers.getAddress(nftContract), 32);
+  const SEADROP_DEPLOY_BLOCK = 15500000; // ~Nov 2022
+
+  const query = async (fromBlock, toBlock) =>
+    alchemy.core.getLogs({ address: SEADROP_ADDRESS, topics: [ev.topicHash, nftTopic], fromBlock, toBlock });
+
+  let logs = [];
+  try {
+    logs = await query(SEADROP_DEPLOY_BLOCK, "latest");
+  } catch {
+    // Range too wide for the tier — walk back in chunks
+    const latest = await alchemy.core.getBlockNumber();
+    const STEP = 200000;
+    for (let to = latest; to > SEADROP_DEPLOY_BLOCK && logs.length === 0; to -= STEP) {
+      const from = Math.max(SEADROP_DEPLOY_BLOCK, to - STEP + 1);
+      try { logs = await query(from, to); } catch {}
+    }
+  }
+  if (!logs || logs.length === 0) return null;
+
+  const last = logs[logs.length - 1];
+  const decoded = iface.decodeEventLog("AllowListUpdated", last.data, last.topics);
+  return {
+    allowListURI: decoded.allowListURI,
+    publicKeyURIs: decoded.publicKeyURIs,
+    merkleRoot: decoded.newMerkleRoot,
+  };
+}
+
+// Flexibly dig an address's { mintParams, proof } out of a hosted allowlist JSON (format varies by host).
+export function parseAllowlistEntry(json, address) {
+  const lower = address.toLowerCase();
+  const isProof = (a) =>
+    Array.isArray(a) && a.length > 0 && a.every((x) => typeof x === "string" && /^0x[0-9a-fA-F]{64}$/.test(x));
+  const asMintParams = (o) => {
+    if (!o) return null;
+    if (Array.isArray(o) && o.length === 8) return o.map(String);
+    if (typeof o === "object" && MP_FIELDS.every((k) => k in o)) return MP_FIELDS.map((k) => String(o[k]));
+    return null;
+  };
+
+  // An "entry" is any object that has a proof + (its own or an inherited) mintParams and matches our address
+  const fromEntry = (entry, inheritedMp) => {
+    if (!entry || typeof entry !== "object") return null;
+    const proof = isProof(entry.proof) ? entry.proof : isProof(entry.merkleProof) ? entry.merkleProof : null;
+    if (!proof) return null;
+    const addr = (entry.minter || entry.address || entry.wallet || "").toLowerCase();
+    if (addr && addr !== lower) return null;
+    const mp = asMintParams(entry.mintParams) || asMintParams(entry) || inheritedMp;
+    if (!mp) return null;
+    return { mintParams: mp, proof };
+  };
+
+  // 1. Keyed by address: { "0xabc": { proof, mintParams } }
+  for (const [k, v] of Object.entries(json || {})) {
+    if (k.toLowerCase() === lower) {
+      const e = fromEntry(v) || (isProof(v) ? { mintParams: asMintParams(json.mintParams), proof: v } : null);
+      if (e && e.mintParams) return e;
+    }
+  }
+
+  // 2. Arrays of entries, possibly under a shared mintParams (stage-level)
+  const sharedMp = asMintParams(json?.mintParams);
+  const arrays = [json, json?.entries, json?.leaves, json?.allowList, json?.allowlist].filter(Array.isArray);
+  for (const arr of arrays) {
+    for (const entry of arr) {
+      const e = fromEntry(entry, sharedMp);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
+// Resolve the on-chain allowlist for ONE address → { mintParams, proof } or null.
+export async function resolveSeadropAllowlist(alchemy, nftContract, address) {
+  const info = await getSeadropAllowListURI(alchemy, nftContract);
+  if (!info?.allowListURI) return { error: "no_uri", merkleRoot: info?.merkleRoot || null };
+  if (info.publicKeyURIs && info.publicKeyURIs.length > 0) {
+    return { error: "encrypted", uri: info.allowListURI }; // OpenSea-encrypted list — can't read others' entries
+  }
+  let json;
+  try {
+    const url = info.allowListURI.startsWith("ipfs://")
+      ? info.allowListURI.replace("ipfs://", "https://ipfs.io/ipfs/")
+      : info.allowListURI;
+    const res = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(10000) });
+    json = res.ok ? await res.json() : null;
+  } catch {}
+  if (!json) return { error: "fetch_failed", uri: info.allowListURI };
+
+  const entry = parseAllowlistEntry(json, address);
+  if (!entry) return { error: "not_on_list" };
+  return { entry };
+}
+
+// Resolve the allowlist for MANY addresses at once (one event-scan + one fetch).
+// Returns { entries: { addr: { mintParams, proof } }, mintParams?, error? }
+export async function resolveSeadropAllowlistBatch(alchemy, nftContract, addresses) {
+  const info = await getSeadropAllowListURI(alchemy, nftContract);
+  if (!info?.allowListURI) return { error: "no_uri", merkleRoot: info?.merkleRoot || null, entries: {} };
+  if (info.publicKeyURIs && info.publicKeyURIs.length > 0) {
+    return { error: "encrypted", uri: info.allowListURI, entries: {} };
+  }
+  let json;
+  try {
+    const url = info.allowListURI.startsWith("ipfs://")
+      ? info.allowListURI.replace("ipfs://", "https://ipfs.io/ipfs/")
+      : info.allowListURI;
+    const res = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(12000) });
+    json = res.ok ? await res.json() : null;
+  } catch {}
+  if (!json) return { error: "fetch_failed", uri: info.allowListURI, entries: {} };
+
+  const entries = {};
+  let sampleMp = null;
+  for (const addr of addresses) {
+    const e = parseAllowlistEntry(json, addr);
+    if (e) { entries[addr.toLowerCase()] = e; sampleMp = sampleMp || e.mintParams; }
+  }
+  return { entries, mintParams: sampleMp, error: Object.keys(entries).length ? null : "not_on_list" };
+}
+
 // ─── SeaDrop drop schedule (the Proof-style phase card) ──────────────────────
 
 // Read the public + allowlist schedule straight from the SeaDrop router. Works before the sale opens.
