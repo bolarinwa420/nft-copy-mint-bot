@@ -424,20 +424,28 @@ async function handleMintDetected({ whale, contract, tx }) {
   const usdCost = ethAmount * ethPrice;
 
   const whaleLabel = getWhaleLabel(whale);
+
+  // Resolve the REAL NFT contract (for SeaDrop, `contract` is the router) so the
+  // OpenSea link unfurls the actual collection card, not the router address.
+  const rawData = tx.input || tx.data || "0x";
+  const nftAddr = getNftContract(contractLower, rawData);
+  const collectionName = await getCollectionName(nftAddr);
+
   const alertMsg =
     `🐋 *Whale Mint Detected!*\n\n` +
     (whaleLabel ? `${whaleLabel}\n` : ``) +
+    (collectionName ? `*${collectionName}*\n` : ``) +
     `Whale: \`${whale}\`\n` +
-    `Contract: \`${contract}\`\n` +
+    `Contract: \`${nftAddr}\`\n` +
     `Whale paid: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)})\n` +
     `Chain: Ethereum\n` +
-    `Auto-Mint: ${settings.autoMint ? "✅ Checking..." : "❌ Off"}`;
+    `Auto-Mint: ${settings.autoMint ? "✅ Checking..." : "❌ Off"}\n\n` +
+    `[OpenSea](https://opensea.io/assets/ethereum/${nftAddr}) | [Etherscan](https://etherscan.io/address/${nftAddr})`;
 
   await telegramNotify(alertMsg);
   if (!settings.autoMint) return;
 
   // mintSigned = signature locked to whale's wallet — skip entirely, sub-wallets included
-  const rawData = tx.input || tx.data || "0x";
   if (rawData.slice(0, 10).toLowerCase() === SEADROP_MINT_SIGNED_SELECTOR) {
     await telegramNotify(
       `🔒 *Signed Mint — Skipped*\n\n` +
@@ -448,7 +456,7 @@ async function handleMintDetected({ whale, contract, tx }) {
 
   // Drainer check — verify the NFT contract is a real ERC721/ERC1155.
   // Whitelisted contracts bypass this (user has explicitly trusted them).
-  const nftAddr = getNftContract(contractLower, rawData);
+  // (nftAddr already resolved above for the alert link.)
   const isWhitelisted = whitelist.length > 0 && whitelist.includes(contractLower);
   if (!isWhitelisted) {
     const safe = await isLikelyNFTContract(nftAddr);
