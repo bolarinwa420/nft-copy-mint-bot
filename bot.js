@@ -173,7 +173,7 @@ function formatStatusMessage() {
     `WebSocket: ${wsIcon} last event ${wsAge}\n` +
     `Auto-Mint: ${settings.autoMint ? on + " ON" : off + " OFF"}\n` +
     `MEV Shield: ${settings.mevShield ? on + " ON" : off + " OFF"}\n` +
-    `Max Mint: $${settings.maxMintUsd || "2.10"} USD\n` +
+    `Max Mint: $${settings.maxMintUsd || "0.51"} USD\n` +
     `Free Mints: ${settings.allowFreeMints !== false ? on + " ON" : off + " OFF"}\n` +
     `Catch-All: ${settings.catchAll ? "⚡ ON" : off + " OFF (known selectors only)"}\n\n` +
     `*Filters:*\n` +
