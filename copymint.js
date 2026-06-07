@@ -627,8 +627,11 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     return txHash;
   } catch (err) {
     console.error("[CopyMint] Failed:", err.message);
-    await telegramNotify(`❌ *Copy Mint Failed*\n\nError: ${err.message}`);
-    throw err;
+    // Plain text (no Markdown) — error messages contain tx hex/underscores that break Telegram entity parsing.
+    // Do NOT re-throw: this runs inside an un-awaited Promise.all in the whale handler, so a throw here
+    // becomes an unhandled rejection and crashes the process on Railway.
+    await telegramNotify(`❌ Copy Mint Failed\n\nError: ${err.message}`, null, null);
+    return;
   }
 }
 

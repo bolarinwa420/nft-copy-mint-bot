@@ -3008,6 +3008,17 @@ bot.start({
   },
 });
 
+// Last line of defense: a stray promise rejection (e.g. a broadcast that reverts in an
+// un-awaited Promise.all) must NEVER kill the container into a Railway restart loop.
+// Log and keep running — degrade, don't crash.
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error("[UnhandledRejection]", msg);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[UncaughtException]", err?.message || err);
+});
+
 // Graceful shutdown for Railway restarts
 process.once("SIGINT", () => bot.stop());
 process.once("SIGTERM", () => bot.stop());
