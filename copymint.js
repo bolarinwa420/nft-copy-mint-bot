@@ -154,11 +154,11 @@ async function getCollectionName(contractAddress) {
 }
 
 // USD tiers: price per NFT → how many we mint
-// < $0.15  → 10  |  $0.15–$0.30 → 3  |  $0.30–$0.51 → 2  |  > $0.51 → skip
+// < $0.15 → 3  |  $0.15–$0.29 → 2  |  $0.30–$0.51 → 1  |  > $0.51 → skip
 function getTargetQty(priceUsdPerNft) {
-  if (priceUsdPerNft < 0.15) return 10;
-  if (priceUsdPerNft <= 0.30) return 3;
-  return 2;
+  if (priceUsdPerNft < 0.15) return 3;
+  if (priceUsdPerNft <= 0.29) return 2;
+  return 1;
 }
 
 // Check if the contract enforces a per-wallet limit. Runs all probes in parallel; cached.
