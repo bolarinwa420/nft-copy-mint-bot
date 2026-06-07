@@ -142,10 +142,13 @@ initWatcher(provider, notify);
 initPriceAlerts(notify);
 initSweepWatcher(notify);
 initDailyDigest(notify);
-initSalesWatcher(notify);
+// DISABLED 2026-06-07: these three poll Reservoir's free API, which is dead
+// (every call → "fetch failed"). They produced nothing but log spam and CPU.
+// Re-enable once repointed to a live data source (e.g. OpenSea API v2).
+// initSalesWatcher(notify);
 initSeadropDetector(notify);
-initNewCollectionWatcher(notify);
-initMintFloorTracker(notify);
+// initNewCollectionWatcher(notify);
+// initMintFloorTracker(notify);
 initDaemonSniper(provider, mainSigner);
 startWatcher();
 if (!process.env.MORALIS_API_KEY) await startTracking();
