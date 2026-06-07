@@ -28,7 +28,12 @@ import { initDaemonSniper, runDaemonSnipe, runDaemonWrap, detectPool, detectTax,
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-const provider = new ethers.JsonRpcProvider("https://ethereum.publicnode.com");
+// Reads + pre-mint simulation run through this provider. Use a reliable keyed RPC
+// (Infura via RPC_URL) so the simulation gate is honest; fall back to the public
+// node only if RPC_URL is unset. The flaky public node was false-passing sims.
+const RPC_URL = process.env.RPC_URL || "https://ethereum.publicnode.com";
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+console.log(`[Provider] reads/simulation via ${new URL(RPC_URL).host}`);
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 

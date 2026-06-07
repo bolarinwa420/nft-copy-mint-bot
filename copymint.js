@@ -161,6 +161,12 @@ function getTargetQty(priceUsdPerNft) {
   return 1;
 }
 
+// Totally-free mints (0 ETH): grab the full per-wallet cap, but never blindly more
+// than this ceiling (some caps are uint16-max = "unlimited"). If the cap can't be
+// read at all, fall back to this conservative qty instead of guessing the whale's.
+const FREE_MINT_MAX = 10;
+const FREE_MINT_FALLBACK_QTY = 3;
+
 // Check if the contract enforces a per-wallet limit. Runs all probes in parallel; cached.
 const walletLimitCache = new Map();
 async function checkMaxPerWallet(contractAddress) {
@@ -190,6 +196,30 @@ async function checkMaxPerWallet(contractAddress) {
   const limit = hit ? hit.value : null;
   walletLimitCache.set(addr, limit);
   return limit;
+}
+
+// SeaDrop stores the per-wallet cap on the ROUTER, not the NFT contract — so the
+// getter probes above can never see it. getPublicDrop(nft).maxTotalMintableByWallet
+// is the real cap. Returns null if not a SeaDrop drop / no public drop configured.
+const SEADROP_DROP_IFACE = new ethers.Interface([
+  "function getPublicDrop(address nftContract) view returns (uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients)",
+]);
+const seadropCapCache = new Map();
+async function getSeadropWalletCap(nftContract) {
+  const addr = nftContract.toLowerCase();
+  if (seadropCapCache.has(addr)) return seadropCapCache.get(addr);
+  let cap = null;
+  try {
+    const raw = await provider.call({
+      to: SEADROP_ADDRESS,
+      data: SEADROP_DROP_IFACE.encodeFunctionData("getPublicDrop", [nftContract]),
+    });
+    const d = SEADROP_DROP_IFACE.decodeFunctionResult("getPublicDrop", raw);
+    const max = Number(d.maxTotalMintableByWallet);
+    if (max > 0 && max <= 100000) cap = max;
+  } catch {}
+  seadropCapCache.set(addr, cap);
+  return cap;
 }
 
 // ── Token-ID Collision Handling ───────────────────────────────────────────
@@ -272,17 +302,16 @@ async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = nu
   const data = rawData || "0x";
   const value = BigInt(txValue || 0);
 
-  // Free mint — no cap, send as-is
-  if (isFree) return { data, value, skip: false, originalQty: null, newQty: null };
-
-  // Detect quantity from calldata
+  // ── Detect quantity + the real NFT contract from calldata ──
   let originalQty = null;
   let isSeaDrop = false;
+  let seadropNft = null;
 
   if (data.slice(0, 10).toLowerCase() === SEADROP_MINT_PUBLIC_SELECTOR) {
     try {
       const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
       originalQty = Number(decoded.quantity);
+      seadropNft = decoded.nftContract;
       isSeaDrop = true;
     } catch {}
   }
@@ -298,34 +327,54 @@ async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = nu
   }
 
   const effectiveQty = originalQty || 1;
-  const pricePerNft = value / BigInt(effectiveQty);
+  const pricePerNft = isFree ? 0n : value / BigInt(effectiveQty);
 
-  // Convert to USD and apply ceiling
-  const ethUsd = await getEthUsdPrice();
-  const priceUsdPerNft = parseFloat(ethers.formatEther(pricePerNft)) * ethUsd;
-
-  const skipAbove = parseFloat(getSettings().maxMintUsd) || DEFAULT_SKIP_ABOVE_USD;
-  if (priceUsdPerNft > skipAbove) {
-    return { data, value, skip: true, originalQty, newQty: 0, pricePerNft };
+  // ── Resolve the per-wallet cap FIRST (this is the hard ceiling in every case) ──
+  // SeaDrop keeps the cap on the router (getPublicDrop), keyed by the real NFT
+  // contract — not whaleTx.to. Non-SeaDrop drops expose it via getter on the contract.
+  let walletCap = null;
+  if (isSeaDrop && seadropNft) walletCap = await getSeadropWalletCap(seadropNft);
+  if (walletCap === null && contractAddress && !isSeaDrop) {
+    walletCap = await checkMaxPerWallet(contractAddress);
   }
 
-  // Can't detect qty → send original calldata as-is (qty=1 implied)
+  // ── Decide target quantity ──
+  let newQty;
+  if (isFree) {
+    // Totally free (0 ETH, no $ value): mint the FULL per-wallet max, clamped to a
+    // sane ceiling. If the cap can't be read, use a conservative fallback rather
+    // than copying the whale's qty blind (that's what reverted PLOP: qty 7 vs cap 1).
+    newQty = walletCap !== null ? Math.min(walletCap, FREE_MINT_MAX) : FREE_MINT_FALLBACK_QTY;
+  } else {
+    // Paid: enforce USD ceiling, then my preset tier qty.
+    const ethUsd = await getEthUsdPrice();
+    const priceUsdPerNft = parseFloat(ethers.formatEther(pricePerNft)) * ethUsd;
+    const skipAbove = parseFloat(getSettings().maxMintUsd) || DEFAULT_SKIP_ABOVE_USD;
+    if (priceUsdPerNft > skipAbove) {
+      return { data, value, skip: true, originalQty, newQty: 0, pricePerNft };
+    }
+    newQty = getTargetQty(priceUsdPerNft);
+  }
+
+  // Per-wallet cap is the hard ceiling — max 1 means mint exactly 1.
+  if (walletCap !== null && walletCap < newQty) newQty = walletCap;
+  if (newQty < 1) newQty = 1;
+
+  // Can't locate qty in calldata to re-encode. If the cap is 1 and the calldata is a
+  // bare single-uint mint, force it to 1; otherwise send as-is (best effort).
   if (originalQty === null) {
-    return { data, value, skip: false, originalQty: null, newQty: 1 };
+    return {
+      data: walletCap === 1 ? buildSingleMintData(data) : data,
+      value,
+      skip: false,
+      originalQty: null,
+      newQty: walletCap === 1 ? 1 : null,
+    };
   }
 
-  // Determine target qty from USD tiers
-  let newQty = getTargetQty(priceUsdPerNft);
-
-  // Respect contract's per-wallet limit (e.g. 1 per wallet)
-  if (contractAddress) {
-    const contractMax = await checkMaxPerWallet(contractAddress);
-    if (contractMax !== null && contractMax < newQty) newQty = contractMax;
-  }
-
-  // No re-encoding needed
-  if (newQty >= originalQty) {
-    return { data, value, skip: false, originalQty, newQty: originalQty };
+  // Nothing to change.
+  if (newQty === originalQty) {
+    return { data, value, skip: false, originalQty, newQty };
   }
 
   // Re-encode calldata with adjusted quantity
