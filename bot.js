@@ -28,13 +28,20 @@ import { initDaemonSniper, runDaemonSnipe, runDaemonWrap, detectPool, detectTax,
 await initDb();
 
 const bot = new Bot(process.env.BOT_TOKEN);
-// Reads + pre-mint simulation run through this provider. Use a reliable keyed RPC
-// (Infura via RPC_URL) so the simulation gate is honest; fall back to the public
-// node only if RPC_URL is unset. The flaky public node was false-passing sims.
-const RPC_URL = process.env.RPC_URL || "https://ethereum.publicnode.com";
-const provider = new ethers.JsonRpcProvider(RPC_URL);
-console.log(`[Provider] reads/simulation via ${new URL(RPC_URL).host}`);
+// Bulk/background reads (floor polls, sweep/drop watchers, balance scans) — high
+// volume, latency-tolerant → free public node so we don't burn the keyed RPC quota.
+const provider = new ethers.JsonRpcProvider("https://ethereum.publicnode.com");
 const mainSigner = new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider);
+
+// Pre-mint simulation + cap reads need an HONEST node (public node false-passed the
+// PLOP sim). Route ONLY copy-mint through the keyed RPC (Infura) — ~10 calls per
+// detected mint, nowhere near the free limit. staticNetwork stops eth_chainId polling
+// (which was 429ing into an UnhandledRejection). Falls back to publicnode if unset.
+const SIM_RPC_URL = process.env.RPC_URL || "https://ethereum.publicnode.com";
+const simProvider = process.env.RPC_URL
+  ? new ethers.JsonRpcProvider(SIM_RPC_URL, ethers.Network.from(1), { staticNetwork: true })
+  : provider;
+console.log(`[Provider] bulk reads via publicnode | simulation via ${new URL(SIM_RPC_URL).host}`);
 const MAIN_ADDRESS = await mainSigner.getAddress();
 
 // Bot notification function — sends to alert chat or falls back to admin
@@ -106,7 +113,7 @@ if (process.env.MORALIS_API_KEY) {
   setTrackerAlertFn(notify);
   await startTracking();
 }
-await initCopyMint(provider, mainSigner, notify, askApproval);
+await initCopyMint(simProvider, mainSigner, notify, askApproval);
 
 async function askIdSelection({ mintId, nftAddr, available, total, minted, allAvailable }) {
   const chatId = getSettings().alertChatId || process.env.ALERT_CHAT_ID;

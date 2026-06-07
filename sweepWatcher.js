@@ -9,7 +9,9 @@ const COOLDOWN        = 30 * 60 * 1000; // re-alert max once per 30 min per (wal
 const ERC721_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const ERC1155_SINGLE  = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62";
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || "https://ethereum.publicnode.com");
+// Heavy getLogs over wide block ranges — stays on the free public node so it doesn't
+// drain the keyed RPC quota (RPC_URL is reserved for the copy-mint simulation gate).
+const provider = new ethers.JsonRpcProvider("https://ethereum.publicnode.com");
 
 function padAddress(addr) {
   return "0x" + addr.replace("0x", "").toLowerCase().padStart(64, "0");
