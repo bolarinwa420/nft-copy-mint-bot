@@ -25,6 +25,10 @@ const MINT_SELECTORS = new Set([
   "0x0c143a93", "0x4b5f1bd2", "0x8b83209b", "0xf3aaf5b7",
   "0x161ac21f", "0x4b61cd6f", "0x9dbb844d", "0xefef39a1",
   "0xd85d3d27", "0xfa7b9a7b", "0x57bc3d78",
+  // mint(uint256 qty,uint256 nonce,uint256 deadline,bytes sig) — backend-voucher
+  // mints (e.g. Pillas 0xe36d…2553). Detected so we ALERT; copymint classifies
+  // these as signature-bound → manual-only (can't copy). Was silently missed.
+  "0x4a9eee69",
 ]);
 
 function isMintTx(input) {

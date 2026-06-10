@@ -502,6 +502,23 @@ async function handleMintDetected({ whale, contract, tx }) {
     return;
   }
 
+  // Backend-voucher mints (custom contracts, e.g. Pillas mint(...,bytes sig)).
+  // The signature is bound to the minter's address — uncopyable. Alert the user
+  // so they can mint manually with their own eligible wallets, instead of the
+  // bot eating a guaranteed BadSignature() revert.
+  if (looksLikeSignedMint(rawData)) {
+    await telegramNotify(
+      `🔏 *Voucher Mint — Manual Only*\n\n` +
+      (collectionName ? `*${collectionName}*\n` : ``) +
+      `This drop authorizes each mint with an off-chain signature bound to the minter's wallet, so it can't be copied — the voucher won't validate from your wallets.\n\n` +
+      `Whale paid: ${ethAmount.toFixed(6)} ETH ($${usdCost.toFixed(2)}) this mint.\n` +
+      `👉 Mint it yourself on the project's site with your own wallets.\n\n` +
+      `Contract: \`${nftAddr}\`\n` +
+      `[OpenSea](https://opensea.io/assets/ethereum/${nftAddr}) | [Etherscan](https://etherscan.io/address/${nftAddr})`
+    );
+    return;
+  }
+
   // Drainer check — verify the NFT contract is a real ERC721/ERC1155.
   // Whitelisted contracts bypass this (user has explicitly trusted them).
   // (nftAddr already resolved above for the alert link.)
@@ -547,6 +564,28 @@ export function resolveApproval(mintId, approved) {
 }
 
 const SEADROP_MINT_SIGNED_SELECTOR = "0x4b61cd6f";
+
+// Detects backend-voucher / signature-gated mints (e.g. Pillas
+// mint(uint256,uint256,uint256,bytes), selector 0x4a9eee69). The contract
+// recovers an ECDSA signer over (msg.sender, qty, nonce, deadline) — the sig is
+// bound to the MINTER's wallet, so replaying a whale's calldata from our wallets
+// fails BadSignature(). Uncopyable, same class as SeaDrop mintSigned. We alert
+// "manual only" instead of burning a doomed copy attempt.
+// Heuristic: calldata carries a trailing dynamic `bytes` of length 65 ending in
+// a valid ECDSA v byte (27/28/0/1) — the shape of an EIP-712 voucher signature.
+function looksLikeSignedMint(data) {
+  const body = (data || "0x").slice(10);
+  for (let i = 0; i + 64 <= body.length; i += 64) {
+    let word;
+    try { word = BigInt("0x" + body.slice(i, i + 64)); } catch { continue; }
+    if (word !== 65n) continue;              // bytes length == 65
+    const sig = body.slice(i + 64, i + 64 + 130);
+    if (sig.length !== 130) continue;
+    const v = parseInt(sig.slice(128, 130), 16);
+    if (v === 27 || v === 28 || v === 0 || v === 1) return true;
+  }
+  return false;
+}
 
 export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
