@@ -28,7 +28,8 @@ export async function initRh(bot, notify) {
       `Chain: ${RH_CHAIN_ID}\n` +
       `Auto-mint: ${s.enabled ? "🟢 ON" : "🔴 OFF"}  |  Mode: ${s.dryRun ? "🧪 DRY RUN" : "🚀 LIVE"}\n` +
       `Tracked whales: ${st.tracked}\n` +
-      `Wallets firing: ${s.walletCount} (of ${listWallets().length} loaded)\n` +
+      `Wallets firing: ${s.walletCount} (from top of pool)\n` +
+      `Main wallet in pool: ${s.useMainWallet ? "🟢 yes (position #1)" : "🔴 no"}  |  sub-wallets loaded: ${listWallets().length}\n` +
       `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Hard cap/wallet: ${s.maxMintNative}\n` +
       `Free mints: ${s.allowFreeMints ? `yes → max ${s.freeMintMax}/wallet` : "no"}\n` +
       `Ladder ($/NFT): <0.10→10 · 0.10-0.30→5 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
@@ -82,20 +83,31 @@ export async function initRh(bot, notify) {
       await updateRhSettings({ walletCount: n });
       return ctx.reply(`👛 RH will fire from ${n} wallet(s)`);
     }
-    // no arg → show native balances of the pool on RH
+    // no arg → show native balances of the firing pool on RH, in FIRING ORDER
     const provider = getRhProvider();
-    const addrs = listWallets();
-    if (!addrs.length) return ctx.reply("No sub-wallets loaded.");
-    const sample = addrs.slice(0, 15);
-    const bals = await Promise.all(sample.map(a => provider.getBalance(a).catch(() => null)));
-    let total = 0n; const okBals = [];
-    for (const b of bals) if (b != null) { total += b; okBals.push(b); }
-    const lines = sample.map((a, i) => `\`${shortAddr(a)}\` — ${bals[i] == null ? "?" : (+ethers.formatEther(bals[i])).toFixed(4)}`).join("\n");
+    const s = getRhSettings();
+    const pool = [];
+    if (s.useMainWallet && process.env.MAIN_PRIVATE_KEY) {
+      try { pool.push({ addr: new ethers.Wallet(process.env.MAIN_PRIVATE_KEY).address, tag: "MAIN" }); } catch {}
+    }
+    for (const a of listWallets()) pool.push({ addr: a, tag: "sub" });
+    if (!pool.length) return ctx.reply("No wallets in pool. Enable /rhmain on or import sub-wallets.");
+    const sample = pool.slice(0, 15);
+    const bals = await Promise.all(sample.map(w => provider.getBalance(w.addr).catch(() => null)));
+    const lines = sample.map((w, i) =>
+      `#${i + 1} ${w.tag === "MAIN" ? "👑" : "  "}\`${shortAddr(w.addr)}\` — ${bals[i] == null ? "?" : (+ethers.formatEther(bals[i])).toFixed(4)}`
+    ).join("\n");
     ctx.reply(
-      `👛 *RH native balances* (first ${sample.length}/${addrs.length})\n${lines}\n\n` +
-      `Sampled total: ${(+ethers.formatEther(total)).toFixed(4)}\n[explorer](${RH_EXPLORER_ADDR}${addrs[0]})`,
+      `👛 *RH pool balances* (firing order, first ${sample.length}/${pool.length})\n${lines}\n\n` +
+      `Firing top *${s.walletCount}*. \`#1\` is what \`/rhwallets 1\` uses.\n[explorer](${RH_EXPLORER_ADDR}${sample[0].addr})`,
       md
     );
+  });
+  bot.command("rhmain", async (ctx) => {
+    const v = (ctx.match || "").trim().toLowerCase();
+    if (v !== "on" && v !== "off") return ctx.reply("Usage: /rhmain on|off  (include the MAIN wallet as pool position #1)");
+    await updateRhSettings({ useMainWallet: v === "on" });
+    ctx.reply(`👑 Main wallet ${v === "on" ? "INCLUDED as pool #1" : "excluded from pool"}`);
   });
   bot.command("rhfree", async (ctx) => {
     const v = (ctx.match || "").trim().toLowerCase();
@@ -110,5 +122,5 @@ export async function initRh(bot, notify) {
     ctx.reply(`📜 *RH mint history*\n${lines}`, md);
   });
 
-  console.log("[RH] Commands registered: /rhstatus /rhon /rhoff /rhdry /rhlive /rhtrack /rhuntrack /rhtracked /rhcap /rhgas /rhwallets /rhfree /rhhistory");
+  console.log("[RH] Commands registered: /rhstatus /rhon /rhoff /rhdry /rhlive /rhtrack /rhuntrack /rhtracked /rhcap /rhgas /rhwallets /rhmain /rhfree /rhhistory");
 }

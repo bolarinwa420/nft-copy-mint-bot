@@ -60,10 +60,16 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
     return;
   }
 
-  const allSigners = getAllSigners(provider);
-  const signers = allSigners.slice(0, Math.max(1, Math.min(s.walletCount || 100, allSigners.length)));
+  // Firing pool = [main wallet?] + 100 sub-wallets. walletCount slices from the top,
+  // so with useMainWallet=true and walletCount=1 the ONLY wallet fired is main.
+  let pool = getAllSigners(provider);
+  if (s.useMainWallet && process.env.MAIN_PRIVATE_KEY) {
+    try { pool = [new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider), ...pool]; }
+    catch (e) { console.warn("[RH] main wallet signer build failed:", e.message); }
+  }
+  const signers = pool.slice(0, Math.max(1, Math.min(s.walletCount || 100, pool.length)));
   if (!signers.length) {
-    await notify("⚠️ *RH mint detected but no sub-wallets loaded.* Import keys first.", null);
+    await notify("⚠️ *RH mint detected but no wallets loaded.* Import keys or enable main wallet.", null);
     return;
   }
 

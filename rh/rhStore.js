@@ -20,7 +20,8 @@ const defaultData = {
     allowFreeMints: true,
     freeMintMax: 10,      // free mints: grab per-wallet cap, clamped to this
     freeMintFallback: 3,  // free mint + cap unreadable → this many
-    walletCount: 100,     // how many of the 100 sub-wallets to fire (from top)
+    walletCount: 100,     // how many wallets to fire, from the top of the pool
+    useMainWallet: true,  // prepend the MAIN wallet (MAIN_PRIVATE_KEY) to the pool
     alertChatId: null,    // falls back to mainnet ALERT_CHAT_ID at call site
   },
   mintLog: [],        // [{ contract, wallet, txHash, valueNative, timestamp }]
