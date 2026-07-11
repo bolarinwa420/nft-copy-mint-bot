@@ -7,6 +7,7 @@ import { ethers } from "ethers";
 import { getAllSigners } from "../wallets.js";
 import { getRhSettings, logRhMint } from "./rhStore.js";
 import { RH_EXPLORER_TX, RH_EXPLORER_ADDR } from "./rhConfig.js";
+import { rhAdjustQuantity } from "./rhQty.js";
 
 // Batch sends so we don't hammer the RH RPC (which is a single public endpoint).
 const BATCH = 10;
@@ -32,15 +33,28 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   if (!s.enabled) return;
 
   const to = whaleTx.to;
-  const data = whaleTx.input || whaleTx.data;
-  const value = BigInt(whaleTx.value || "0");
+  const rawData = whaleTx.input || whaleTx.data;
+  const rawValue = BigInt(whaleTx.value || "0");
 
-  // Spend guardrail
-  if (!s.allowFreeMints && value === 0n) return;
+  if (!s.allowFreeMints && rawValue === 0n) return;
+
+  // ── Apply the USD-per-NFT quantity ladder (free→max, tiers, skip >$2) ──
+  const adj = await rhAdjustQuantity(rawData, rawValue, provider);
+  if (adj.skip) {
+    await notify(
+      `⏭️ *RH mint skipped — ${adj.reason}*\nWhale: \`${whaleTx.from}\`\nContract: \`${to}\`\n[whale tx](${RH_EXPLORER_TX}${whaleTx.hash})`,
+      null
+    );
+    return;
+  }
+  const data = adj.data;
+  const value = adj.value;           // adjusted per-wallet native value
+
+  // Absolute per-wallet spend backstop (native token), independent of the ladder.
   const cap = ethers.parseEther(String(s.maxMintNative || "0"));
   if (cap > 0n && value > cap) {
     await notify(
-      `⚠️ *RH mint skipped — over cap*\nWhale: \`${whaleTx.from}\`\nValue ${ethers.formatEther(value)} > cap ${s.maxMintNative}\n[whale tx](${RH_EXPLORER_TX}${whaleTx.hash})`,
+      `⚠️ *RH mint skipped — over hard cap*\nPer-wallet ${ethers.formatEther(value)} > cap ${s.maxMintNative}\nContract: \`${to}\`\n[whale tx](${RH_EXPLORER_TX}${whaleTx.hash})`,
       null
     );
     return;
@@ -54,13 +68,20 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   }
 
   const gas = await computeRhGas(provider, s.gasCeilingGwei);
-  const priceStr = value === 0n ? "FREE" : `${ethers.formatEther(value)} native`;
+  const isFree = rawValue === 0n;
+  const priceStr = isFree
+    ? "FREE"
+    : `$${(adj.priceUsd || 0).toFixed(3)}/NFT (${(+ethers.formatEther(value / BigInt(adj.newQty || 1))).toFixed(5)} native)`;
+  const qtyStr = adj.newQty != null
+    ? `${adj.newQty}/wallet${adj.originalQty && adj.originalQty !== adj.newQty ? ` (whale did ${adj.originalQty})` : ""}`
+    : `whale's qty (unparsed)`;
 
   await notify(
     `🟣 *RH WHALE MINT DETECTED*\n` +
     `Whale: \`${whaleTx.from}\`\n` +
     `Contract: \`${to}\`\n` +
-    `Price/wallet: ${priceStr}\n` +
+    `Price: ${priceStr}\n` +
+    `Minting: *${qtyStr}*\n` +
     `Firing from ${signers.length} wallet(s)${s.dryRun ? " — 🧪 DRY RUN (sim only)" : ""}\n` +
     `[whale tx](${RH_EXPLORER_TX}${whaleTx.hash}) · [contract](${RH_EXPLORER_ADDR}${to})`,
     null

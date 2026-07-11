@@ -29,8 +29,9 @@ export async function initRh(bot, notify) {
       `Auto-mint: ${s.enabled ? "🟢 ON" : "🔴 OFF"}  |  Mode: ${s.dryRun ? "🧪 DRY RUN" : "🚀 LIVE"}\n` +
       `Tracked whales: ${st.tracked}\n` +
       `Wallets firing: ${s.walletCount} (of ${listWallets().length} loaded)\n` +
-      `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Max spend/wallet: ${s.maxMintNative}\n` +
-      `Free mints: ${s.allowFreeMints ? "yes" : "no"}\n` +
+      `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Hard cap/wallet: ${s.maxMintNative}\n` +
+      `Free mints: ${s.allowFreeMints ? `yes → max ${s.freeMintMax}/wallet` : "no"}\n` +
+      `Ladder ($/NFT): <0.10→10 · 0.10-0.30→5 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
       `Head block: ${st.lastBlock}  |  scanned: ${st.scannedBlocks}  |  mints seen: ${st.seenMints}`,
       md
     );

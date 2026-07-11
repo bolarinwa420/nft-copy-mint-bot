@@ -18,6 +18,8 @@ const defaultData = {
     gasCeilingGwei: 5,    // hard cap on gas price (RH is cheap + uncontested)
     maxMintNative: "0.05",// per-wallet spend ceiling in native token; skip above
     allowFreeMints: true,
+    freeMintMax: 10,      // free mints: grab per-wallet cap, clamped to this
+    freeMintFallback: 3,  // free mint + cap unreadable → this many
     walletCount: 100,     // how many of the 100 sub-wallets to fire (from top)
     alertChatId: null,    // falls back to mainnet ALERT_CHAT_ID at call site
   },
