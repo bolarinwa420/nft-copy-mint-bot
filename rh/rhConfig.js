@@ -7,7 +7,7 @@ export const RH_EXPLORER_ADDR = "https://robinhoodchain.blockscout.com/address/"
 
 // How often to poll for new blocks. RH is HTTP-only (no public wss), and far less
 // contested than mainnet, so a short poll is plenty — no MEV-war latency needed.
-export const RH_POLL_MS = Number(process.env.RH_POLL_MS || 1500);
+export const RH_POLL_MS = Number(process.env.RH_POLL_MS || 500);
 
 // Same NFT mint selectors the mainnet blockScanner uses. Copied (not imported) so
 // the RH scanner has zero coupling to the mainnet module. Signature/voucher mints
