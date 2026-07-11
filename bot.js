@@ -155,6 +155,15 @@ if (!process.env.MORALIS_API_KEY) await startTracking();
 // Block scanner runs always — catches every whale mint regardless of Moralis stream status
 initBlockScanner().catch(e => console.warn("[BlockScanner] Init failed:", e.message));
 
+// ─── Robinhood Chain copy-minter (opt-in, fully isolated) ────────────────────
+// Inert unless RH_ENABLED=true. Own db, own poll scanner, own executor — never
+// touches the mainnet provider/signer/copymint path above.
+if (process.env.RH_ENABLED === "true") {
+  import("./rh/index.js")
+    .then(({ initRh }) => initRh(bot, notify))
+    .catch(e => console.warn("[RH] Init failed:", e.message));
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isValidAddress(addr) {
