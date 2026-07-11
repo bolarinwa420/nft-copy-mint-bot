@@ -158,10 +158,17 @@ initBlockScanner().catch(e => console.warn("[BlockScanner] Init failed:", e.mess
 // ─── Robinhood Chain copy-minter (opt-in, fully isolated) ────────────────────
 // Inert unless RH_ENABLED=true. Own db, own poll scanner, own executor — never
 // touches the mainnet provider/signer/copymint path above.
+// Awaited (not fire-and-forget) so the /rh* command handlers are registered
+// BEFORE bot.start() begins polling — grammy won't route to handlers added after
+// polling starts, which silently broke the RH commands (alerts still worked since
+// they're direct API calls). try/catch keeps an RH failure from taking down the bot.
 if (process.env.RH_ENABLED === "true") {
-  import("./rh/index.js")
-    .then(({ initRh }) => initRh(bot, notify))
-    .catch(e => console.warn("[RH] Init failed:", e.message));
+  try {
+    const { initRh } = await import("./rh/index.js");
+    await initRh(bot, notify);
+  } catch (e) {
+    console.warn("[RH] Init failed:", e.message);
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
