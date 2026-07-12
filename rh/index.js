@@ -32,7 +32,7 @@ export async function initRh(bot, notify) {
       `Main wallet in pool: ${s.useMainWallet ? "🟢 yes (position #1)" : "🔴 no"}  |  sub-wallets loaded: ${listWallets().length}\n` +
       `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Hard cap/wallet: ${s.maxMintNative}\n` +
       `Free mints: ${s.allowFreeMints ? `yes → max ${s.freeMintMax}/wallet` : "no"}\n` +
-      `Ladder ($/NFT): <0.10→10 · 0.10-0.30→5 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
+      `Ladder ($/NFT): <0.10→10 · 0.10-0.30→3 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
       `Head block: ${st.lastBlock}  |  scanned: ${st.scannedBlocks}  |  mints seen: ${st.seenMints}`,
       md
     );

@@ -5,7 +5,7 @@
 // Ladder (price per NFT, USD):
 //   free ($0)        → mint per-wallet cap (max), clamped to freeMintMax
 //   $0.001 – $0.099  → 10
-//   $0.10  – $0.30   → 5
+//   $0.10  – $0.30   → 3
 //   $0.31  – $0.50   → 2
 //   $0.51  – $2.00   → 1
 //   > $2.00          → skip
@@ -28,7 +28,7 @@ const SEADROP_DROP_IFACE = new ethers.Interface([
 function getRhTargetQty(usdPerNftRaw) {
   const usdPerNft = Math.round(usdPerNftRaw * 100) / 100;
   if (usdPerNft < 0.10) return 10;   // under a dime
-  if (usdPerNft <= 0.30) return 5;   // $0.10 – $0.30
+  if (usdPerNft <= 0.30) return 3;   // $0.10 – $0.30
   if (usdPerNft <= 0.50) return 2;   // $0.31 – $0.50
   if (usdPerNft <= 2.00) return 1;   // $0.51 – $2.00
   return 0;                          // > $2 → skip
