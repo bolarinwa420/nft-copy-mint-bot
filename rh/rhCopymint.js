@@ -12,6 +12,16 @@ import { rhAdjustQuantity, decodeRhRevert } from "./rhQty.js";
 // Batch sends so we don't hammer the RH RPC (which is a single public endpoint).
 const BATCH = 10;
 
+// NEVER put a gas-price field in an RH eth_call without also pinning gasLimit.
+// The RH node then fails the call with an EMPTY revert ("missing revert data"),
+// even for a call that succeeds cleanly with no gas fields at all. That poisoned
+// our own sim gate and made us skip Robinhood Kong (0xd2d378c5…), a mint the
+// probe wallet could have taken. A simulation doesn't need a gas price anyway —
+// so don't send one.
+function simulate(provider, { to, data, value, from }) {
+  return provider.call({ to, data, value, from });
+}
+
 async function computeRhGas(provider, ceilingGwei) {
   let fee;
   try { fee = await provider.getFeeData(); } catch { fee = {}; }
@@ -85,17 +95,27 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   const probeFrom = await probe.getAddress();
   const candidates = qtyLadder(adj);
   let fireData = data, fireValue = value, fireQty = adj.newQty, lastRevert = null, calibrated = false;
+  let gasLimit = null;
 
   for (const qty of candidates) {
     const built = adj.reencode ? adj.reencode(qty) : { data, value };
     if (perWalletCapExceeded(built.value, s)) { lastRevert = `over hard cap at qty ${qty}`; continue; }
     try {
-      await provider.call({ to, data: built.data, value: built.value, from: probeFrom, ...gas });
+      await simulate(provider, { to, data: built.data, value: built.value, from: probeFrom });
       fireData = built.data; fireValue = built.value; fireQty = qty; calibrated = true;
       break;
     } catch (e) {
       lastRevert = decodeRhRevert(e);
     }
+  }
+
+  // Estimate the limit ONCE off the calibrated call. Sends must carry an explicit
+  // gasLimit — see simulate() for why letting the node infer it is a trap here.
+  if (calibrated) {
+    try {
+      const est = await provider.estimateGas({ to, data: fireData, value: fireValue, from: probeFrom });
+      gasLimit = (est * 130n) / 100n;
+    } catch { gasLimit = 500000n; }
   }
 
   if (!calibrated && candidates.length) {
@@ -153,12 +173,12 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
     const chunk = signers.slice(i, i + BATCH);
     await Promise.allSettled(chunk.map(async (signer) => {
       const from = await signer.getAddress();
-      const txReq = { to, data: fireData, value: fireValue, ...gas };
+      const txReq = { to, data: fireData, value: fireValue, ...gas, ...(gasLimit ? { gasLimit } : {}) };
 
       // Per-wallet sim still runs — the calibrated qty proves the DROP is mintable,
       // but each wallet has its own balance and its own minted-count on the contract.
       try {
-        await provider.call({ ...txReq, from });
+        await simulate(provider, { to, data: fireData, value: fireValue, from });
       } catch (e) {
         reverted++;
         const r = decodeRhRevert(e);
