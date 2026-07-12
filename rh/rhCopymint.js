@@ -59,6 +59,9 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   }
   const data = adj.data;
   const value = adj.value;           // adjusted per-wallet native value
+  // For SeaDrop, `to` is the router — the real collection is decoded from calldata.
+  // Log + report the collection, never the router.
+  const nftAddr = adj.nft || to;
 
   // Absolute per-wallet spend backstop (native token), independent of the ladder.
   const cap = ethers.parseEther(String(s.maxMintNative || "0"));
@@ -145,15 +148,20 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
 
   // Fire-and-forget the alert: awaiting Telegram here put ~300ms of network
   // latency between detection and broadcast, and speed is the whole game on RH.
-  notify(
-    `🟣 *RH WHALE MINT DETECTED*\n` +
-    `Whale: \`${whaleTx.from}\`\n` +
-    `Contract: \`${to}\`\n` +
-    `Price: ${priceStr}\n` +
-    `Minting: *${qtyStr}*\n` +
-    `Firing from ${signers.length} wallet(s)${s.dryRun ? " — 🧪 DRY RUN (sim only)" : ""}\n` +
-    `[whale tx](${RH_EXPLORER_TX}${whaleTx.hash}) · [contract](${RH_EXPLORER_ADDR}${to})`,
-    null
+  // Name lookup is an extra RPC round trip — resolve it OFF the hot path and let
+  // the alert catch up. Broadcasting must never wait on Telegram cosmetics.
+  getCollectionName(provider, nftAddr).then((detectedName) =>
+    notify(
+      `🟣 *RH WHALE MINT DETECTED*\n` +
+      (detectedName ? `🎨 *${detectedName}*\n` : "") +
+      `Whale: \`${whaleTx.from}\`\n` +
+      `Contract: \`${nftAddr}\`\n` +
+      `Price: ${priceStr}\n` +
+      `Minting: *${qtyStr}*\n` +
+      `Firing from ${signers.length} wallet(s)${s.dryRun ? " — 🧪 DRY RUN (sim only)" : ""}\n` +
+      `[whale tx](${RH_EXPLORER_TX}${whaleTx.hash}) · [contract](${RH_EXPLORER_ADDR}${nftAddr})`,
+      null
+    )
   ).catch(() => {});
 
   if (s.dryRun) {
@@ -168,6 +176,7 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   let reverted = 0, failed = 0, sent = 0;
   let firstHash = null;
   const revertReasons = new Map();
+  const pending = [];
 
   for (let i = 0; i < signers.length; i += BATCH) {
     const chunk = signers.slice(i, i + BATCH);
@@ -190,7 +199,8 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
         const resp = await signer.sendTransaction(txReq);
         sent++;
         if (!firstHash) firstHash = resp.hash;
-        await logRhMint({ contract: to, wallet: from, txHash: resp.hash, valueNative: fireValue.toString() });
+        pending.push({ from, resp });
+        await logRhMint({ contract: nftAddr, wallet: from, txHash: resp.hash, valueNative: fireValue.toString() });
       } catch (e) {
         failed++;
         const r = decodeRhRevert(e);
@@ -205,14 +215,91 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
     .map(([r, n]) => `• \`${r}\` ×${n}`)
     .join("\n");
 
+  if (!sent) {
+    await notify(
+      `🟣 *RH copy-mint — nothing sent*\n` +
+      `🔴 reverted (skipped): ${reverted}\n⚠️ send-fail: ${failed}` +
+      (why ? `\n\n*Why:*\n${why}` : "") +
+      `\nContract: \`${nftAddr}\``,
+      null
+    );
+    return;
+  }
+
+  // "sent" only means broadcast. Wait for receipts so the alert reports what was
+  // actually MINTED, and count the tokens we really received from the mint logs.
+  const name = await getCollectionName(provider, nftAddr);
+  const label = name ? `*${name}*` : `\`${nftAddr}\``;
+  let confirmed = 0, onchainFail = 0, tokens = 0;
+
+  const settled = await Promise.allSettled(
+    pending.map(async ({ from, resp }) => {
+      const rcpt = await withTimeout(resp.wait(1), RECEIPT_TIMEOUT_MS);
+      return { from, rcpt };
+    })
+  );
+  for (const r of settled) {
+    if (r.status !== "fulfilled" || !r.value.rcpt) continue;
+    const { from, rcpt } = r.value;
+    if (rcpt.status === 1) { confirmed++; tokens += countMinted(rcpt, from); }
+    else onchainFail++;
+  }
+
   const summary =
-    `🟣 *RH copy-mint complete*\n` +
-    `✅ sent: ${sent} (${fireQty}/wallet)\n` +
-    `🔴 reverted (skipped): ${reverted}\n` +
-    `⚠️ send-fail: ${failed}` +
+    (confirmed
+      ? `✅ *${name || "Mint"} ×${tokens || confirmed * (fireQty || 1)} minted successfully*\n\n`
+      : `🟣 *RH copy-mint complete*\n\n`) +
+    `🎨 Collection: ${label}\n` +
+    `📦 Minted: *${tokens || "?"}* NFTs across ${confirmed} wallet(s) (${fireQty}/wallet)\n` +
+    `🚀 broadcast: ${sent}` +
+    (onchainFail ? `\n💥 failed on-chain: ${onchainFail}` : "") +
+    (reverted ? `\n🔴 reverted (skipped): ${reverted}` : "") +
+    (failed ? `\n⚠️ send-fail: ${failed}` : "") +
     (why ? `\n\n*Why they failed:*\n${why}` : "") +
-    (firstHash ? `\n\n[first tx](${RH_EXPLORER_TX}${firstHash})` : "");
-  await notify(summary + `\nContract: \`${to}\``, null);
+    `\n\nContract: \`${nftAddr}\`` +
+    (firstHash ? `\n[first tx](${RH_EXPLORER_TX}${firstHash}) · ` : "\n") +
+    `[contract](${RH_EXPLORER_ADDR}${nftAddr})`;
+  await notify(summary, null);
+}
+
+const RECEIPT_TIMEOUT_MS = 45_000;
+const ERC721_TRANSFER = ethers.id("Transfer(address,address,uint256)");
+const ERC1155_SINGLE = ethers.id("TransferSingle(address,address,address,uint256,uint256)");
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((res) => setTimeout(() => res(null), ms))]);
+}
+
+// Count tokens the wallet actually received in this tx — mint logs are transfers
+// FROM the zero address TO us. Beats trusting the qty we asked for.
+function countMinted(rcpt, to) {
+  const me = to.toLowerCase();
+  const zero = "0x" + "0".repeat(64);
+  const pad = (a) => "0x" + a.toLowerCase().replace("0x", "").padStart(64, "0");
+  let n = 0;
+  for (const log of rcpt.logs || []) {
+    if (log.topics[0] === ERC721_TRANSFER && log.topics.length === 4) {
+      if (log.topics[1] === zero && log.topics[2] === pad(me)) n++;
+    } else if (log.topics[0] === ERC1155_SINGLE && log.topics.length === 4) {
+      if (log.topics[2] === zero && log.topics[3] === pad(me)) {
+        try { n += Number(ethers.AbiCoder.defaultAbiCoder().decode(["uint256", "uint256"], log.data)[1]); } catch { n++; }
+      }
+    }
+  }
+  return n;
+}
+
+const nameCache = new Map();
+async function getCollectionName(provider, addr) {
+  const k = addr.toLowerCase();
+  if (nameCache.has(k)) return nameCache.get(k);
+  let name = null;
+  try {
+    const c = new ethers.Contract(addr, ["function name() view returns (string)"], provider);
+    name = await c.name();
+  } catch {}
+  nameCache.set(k, name);
+  return name;
 }
 
 // Descending quantities to try, target first. Whale's own qty is a strong signal
