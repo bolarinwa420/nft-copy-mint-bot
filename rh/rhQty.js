@@ -47,21 +47,32 @@ async function getEthUsdPrice() {
   } catch { return ethUsdCache || 3000; }
 }
 
-// SeaDrop keeps the per-wallet cap on the router (getPublicDrop), keyed by the
-// real NFT contract — not the router address. Cached per NFT.
-const capCache = new Map();
-async function getSeadropWalletCap(provider, nft) {
+// SeaDrop keeps BOTH the per-wallet cap and the authoritative mint price on the
+// router (getPublicDrop), keyed by the real NFT contract — not the router.
+//
+// Cached only 10s on purpose: creators mutate the drop mid-flight. Gorala
+// (0x219BCa1b…) went from 0.00003/NFT to FREE between the whale's mint and ours,
+// which is exactly how a long-lived cache gets us reverted.
+const DROP_TTL_MS = 10_000;
+const dropCache = new Map();
+async function getSeadropDrop(provider, nft) {
   const a = nft.toLowerCase();
-  if (capCache.has(a)) return capCache.get(a);
-  let cap = null;
+  const hit = dropCache.get(a);
+  if (hit && Date.now() - hit.at < DROP_TTL_MS) return hit.drop;
+  let drop = null;
   try {
     const raw = await provider.call({ to: SEADROP_ADDRESS, data: SEADROP_DROP_IFACE.encodeFunctionData("getPublicDrop", [nft]) });
     const d = SEADROP_DROP_IFACE.decodeFunctionResult("getPublicDrop", raw);
     const max = Number(d.maxTotalMintableByWallet);
-    if (max > 0 && max <= 100000) cap = max;
+    drop = {
+      mintPrice: BigInt(d.mintPrice),
+      cap: max > 0 && max <= 100000 ? max : null,
+      startTime: Number(d.startTime),
+      endTime: Number(d.endTime),
+    };
   } catch {}
-  capCache.set(a, cap);
-  return cap;
+  dropCache.set(a, { drop, at: Date.now() });
+  return drop;
 }
 
 // Returns { data, value, skip, reason, originalQty, newQty, priceUsd, nft } where
@@ -87,17 +98,30 @@ export async function rhAdjustQuantity(rawData, txValue, provider) {
     const q = parseInt(data.slice(-64), 16); if (q > 0 && q <= 10000) originalQty = q;
   }
   const effQty = originalQty || 1;
-  const pricePerNft = isFree ? 0n : value / BigInt(effQty);
 
-  // ── per-wallet cap (hard ceiling) ──
+  // ── price + cap ──
+  // For SeaDrop the ROUTER is the authority on price: mintPublic enforces
+  // msg.value == mintPrice * qty against the CURRENT on-chain drop. The whale's
+  // paid value is only a hint — if the creator repriced (incl. → FREE) between
+  // their mint and ours, copying their price earns an IncorrectPayment revert.
   let cap = null;
-  if (isSeaDrop && seadropNft) cap = await getSeadropWalletCap(provider, seadropNft);
+  let pricePerNft = isFree ? 0n : value / BigInt(effQty);
+  let priceSource = "whale";
+  if (isSeaDrop && seadropNft) {
+    const drop = await getSeadropDrop(provider, seadropNft);
+    if (drop) {
+      cap = drop.cap;
+      pricePerNft = drop.mintPrice;
+      priceSource = "onchain";
+    }
+  }
+  const isFreeNow = pricePerNft === 0n;
 
   // ── decide target quantity via the ladder ──
   const FREE_MAX = Number(s.freeMintMax || 10);
   const FREE_FALLBACK = Number(s.freeMintFallback || 3);
   let newQty, priceUsd = 0;
-  if (isFree) {
+  if (isFreeNow) {
     newQty = cap !== null ? Math.min(cap, FREE_MAX) : FREE_FALLBACK;
   } else {
     const ethUsd = await getEthUsdPrice();
@@ -111,24 +135,80 @@ export async function rhAdjustQuantity(rawData, txValue, provider) {
   // ── re-encode ──
   // Can't locate qty in calldata → send verbatim (best effort). Sim gate still guards it.
   if (originalQty === null) {
-    return { data, value, skip: false, originalQty: null, newQty: null, priceUsd, nft: seadropNft };
+    return { data, value, skip: false, originalQty: null, newQty: null, priceUsd, nft: seadropNft, reencode: null };
   }
-  if (newQty === originalQty) {
-    return { data, value, skip: false, originalQty, newQty, priceUsd, nft: seadropNft };
+
+  // Rebuilds calldata + native value for an arbitrary quantity. The executor uses
+  // this to step the qty down when the sim reverts (cap we couldn't read, stage
+  // supply nearly exhausted, etc.) instead of throwing the whole mint away.
+  const reencode = (qty) => {
+    // Value is ALWAYS recomputed from the authoritative price — never carried over
+    // from the whale's tx — except when we had no on-chain price to trust and the
+    // qty is unchanged, where replaying their exact value verbatim is safest
+    // (integer division can otherwise shave wei off the total).
+    const keepWhaleValue = priceSource === "whale" && qty === originalQty;
+    const v2 = keepWhaleValue ? value : pricePerNft * BigInt(qty);
+    if (qty === originalQty) return { data, value: v2 };
+
+    let d2 = data;
+    if (isSeaDrop) {
+      try {
+        const dec = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
+        d2 = SEADROP_IFACE.encodeFunctionData("mintPublic", [
+          dec.nftContract, dec.feeRecipient || OPENSEA_FEE_RECIPIENT, ethers.ZeroAddress, qty,
+        ]);
+      } catch { return { data, value: v2 }; }
+    } else if (data.length === 74) {
+      d2 = data.slice(0, 10) + qty.toString(16).padStart(64, "0");
+    } else {
+      d2 = data.slice(0, -64) + qty.toString(16).padStart(64, "0");
+    }
+    return { data: d2, value: v2 };
+  };
+
+  const built = reencode(newQty);
+  return {
+    data: built.data, value: built.value, skip: false,
+    originalQty, newQty, priceUsd, nft: seadropNft, cap, reencode,
+    priceSource, isFree: isFreeNow, repriced: isFree !== isFreeNow || priceSource === "onchain",
+  };
+}
+
+// Custom errors we expect to eat on a SeaDrop-style mint. Without this the sim
+// gate just says "reverted" and we learn nothing about WHY we missed a drop.
+const REVERT_IFACE = new ethers.Interface([
+  "error Error(string)",
+  "error MintQuantityExceedsMaxSupply(uint256 total, uint256 maxSupply)",
+  "error MintQuantityExceedsMaxMintedPerWallet(uint256 total, uint256 allowed)",
+  "error MintQuantityExceedsMaxTokenSupplyForStage(uint256 total, uint256 maxTokenSupplyForStage)",
+  "error MintQuantityCannotBeZero()",
+  "error NotActive(uint256 currentTimestamp, uint256 startTimestamp, uint256 endTimestamp)",
+  "error IncorrectPayment(uint256 got, uint256 want)",
+  "error FeeRecipientNotAllowed()",
+  "error FeeRecipientCannotBeZeroAddress()",
+  "error OnlyINonFungibleSeaDropToken(address received)",
+  "error TokenGatedNotTokenOwner(address nftContract, address allowedNftToken, uint256 allowedNftTokenId)",
+]);
+
+// Pull the revert payload out of whatever shape ethers/the RPC wrapped it in.
+export function decodeRhRevert(err) {
+  const data =
+    err?.data ??
+    err?.error?.data ??
+    err?.info?.error?.data ??
+    err?.value?.data ??
+    null;
+  const hex = typeof data === "string" ? data : data?.data;
+  if (!hex || !hex.startsWith("0x") || hex.length < 10) {
+    return err?.shortMessage || err?.reason || err?.message?.slice(0, 120) || "unknown revert";
   }
-  let newData = data;
-  if (isSeaDrop) {
-    try {
-      const dec = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
-      newData = SEADROP_IFACE.encodeFunctionData("mintPublic", [
-        dec.nftContract, dec.feeRecipient || OPENSEA_FEE_RECIPIENT, ethers.ZeroAddress, newQty,
-      ]);
-    } catch {}
-  } else if (data.length === 74) {
-    newData = data.slice(0, 10) + newQty.toString(16).padStart(64, "0");
-  } else {
-    newData = data.slice(0, -64) + newQty.toString(16).padStart(64, "0");
+  try {
+    const parsed = REVERT_IFACE.parseError(hex);
+    if (!parsed) return `unrecognized revert ${hex.slice(0, 10)}`;
+    if (parsed.name === "Error") return parsed.args[0];
+    const args = parsed.args.map((a) => a.toString()).join(", ");
+    return args ? `${parsed.name}(${args})` : parsed.name;
+  } catch {
+    return `unrecognized revert ${hex.slice(0, 10)}`;
   }
-  const newValue = pricePerNft * BigInt(newQty);
-  return { data: newData, value: newValue, skip: false, originalQty, newQty, priceUsd, nft: seadropNft };
 }
