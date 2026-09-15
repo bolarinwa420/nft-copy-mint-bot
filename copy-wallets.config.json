@@ -1,0 +1,296 @@
+{
+  "generatedAt": "2026-09-15T17:00:08.797Z",
+  "totalWallets": 50,
+  "groups": {
+    "Ibrahim": {
+      "allocation": 15,
+      "wallets": [
+        {
+          "group": "Ibrahim",
+          "walletNumber": "01",
+          "address": "0xea21cb8d432932FE8845e6397718918E2160E1eB"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "02",
+          "address": "0x14fc7AEaEa6301913F47B05573F80b626E135913"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "03",
+          "address": "0x396f9CB8C88b14E60723A2AfC05a5c9DECe09a58"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "04",
+          "address": "0xE9fB1101441c9622165fcF7C55D9f65231168Fa8"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "05",
+          "address": "0x294c20E6a4b97Af5764E5463397F1643A3938900"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "06",
+          "address": "0xeB47C9E0b452D7D179BF9E344a8a80976957f69b"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "07",
+          "address": "0x51B70f2161e5A32c4934aA3d3c5E90AcD753779b"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "08",
+          "address": "0x7F7d2F0527665cC866E46527dE7B0850f13bC364"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "09",
+          "address": "0xa1267040b8a0100FafCB304D214CA0535c1C4708"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "10",
+          "address": "0xeFcd4d54E81ee0C62f6c929A1cFCBFA54A4A6588"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "11",
+          "address": "0x4041f83Dd22Ef9e4C76e5539D138a1250B94F7AC"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "12",
+          "address": "0x6eF4728dA444c99F7E2fA1dC4F8434d1069262a9"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "13",
+          "address": "0x657A3f9044b78F553c310748E15b13d920A52858"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "14",
+          "address": "0x07a2CAdEbbc800fa9fe8b1eE59A56e90764302Cf"
+        },
+        {
+          "group": "Ibrahim",
+          "walletNumber": "15",
+          "address": "0xC1db8bD1130Bb100e85D694CbD0ce3D7c5B16105"
+        }
+      ]
+    },
+    "Helix": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Helix",
+          "walletNumber": "01",
+          "address": "0x419370f5ac17a6eDf5a7d7905155a59a5BAE758E"
+        },
+        {
+          "group": "Helix",
+          "walletNumber": "02",
+          "address": "0x6190f6d9a4B7EcaB7BaE96d0F97e420e50ba4670"
+        },
+        {
+          "group": "Helix",
+          "walletNumber": "03",
+          "address": "0x811c3B55B984563772ef66a6B03f73183fDD2353"
+        },
+        {
+          "group": "Helix",
+          "walletNumber": "04",
+          "address": "0xC6BDa5284a9637702890bA30e321fC29cD4e687B"
+        },
+        {
+          "group": "Helix",
+          "walletNumber": "05",
+          "address": "0x86bccd4f322E369aa899fe54467a362dDbc93574"
+        }
+      ]
+    },
+    "Yinka": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Yinka",
+          "walletNumber": "01",
+          "address": "0x944D85085717Ae7c93a0BA364600940aDdaD6bC6"
+        },
+        {
+          "group": "Yinka",
+          "walletNumber": "02",
+          "address": "0xb9E8b6e0Eb50f698749f4fcce3d7b5790e1b6523"
+        },
+        {
+          "group": "Yinka",
+          "walletNumber": "03",
+          "address": "0x7620E7F73398B7783EBf2e6Fa96450D882df5d6E"
+        },
+        {
+          "group": "Yinka",
+          "walletNumber": "04",
+          "address": "0x0b7595Ed8400B46F8E501ae361ba470425671462"
+        },
+        {
+          "group": "Yinka",
+          "walletNumber": "05",
+          "address": "0xE11A635E901a373E87F8E3364FFad0dDEcCC9845"
+        }
+      ]
+    },
+    "Sham": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Sham",
+          "walletNumber": "01",
+          "address": "0xDfAA819726495E15947A44B94725C582523920AA"
+        },
+        {
+          "group": "Sham",
+          "walletNumber": "02",
+          "address": "0xEa4e7ed29CED7452FB62AB8d886D9674c2427799"
+        },
+        {
+          "group": "Sham",
+          "walletNumber": "03",
+          "address": "0xAbEc3456a06A9a9DEBFADce1270C276e09daA111"
+        },
+        {
+          "group": "Sham",
+          "walletNumber": "04",
+          "address": "0x4f29e3f8b3792f20e47dF7cF6ecddD55454157A8"
+        },
+        {
+          "group": "Sham",
+          "walletNumber": "05",
+          "address": "0x7578f100275E017E14A171b856E0615532C623d9"
+        }
+      ]
+    },
+    "Hannah": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Hannah",
+          "walletNumber": "01",
+          "address": "0x12DE9c5482647ec7A6B76175e78Bcf8e2A66111B"
+        },
+        {
+          "group": "Hannah",
+          "walletNumber": "02",
+          "address": "0x8F46479C686F03663d1CeE67b3A307aC67dBD676"
+        },
+        {
+          "group": "Hannah",
+          "walletNumber": "03",
+          "address": "0x86DA30D2e43e9D0a796a43e36099b005d4796c0c"
+        },
+        {
+          "group": "Hannah",
+          "walletNumber": "04",
+          "address": "0x401e02Ec2ce00db6C7472Dd6D29b43e8d6ccE9ca"
+        },
+        {
+          "group": "Hannah",
+          "walletNumber": "05",
+          "address": "0xAfCE9c20F7D7055a649b20433661185212bdFEEd"
+        }
+      ]
+    },
+    "Scarlet": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Scarlet",
+          "walletNumber": "01",
+          "address": "0x37C2CD9df32B3dA2990eb408FD477705AbaD6C99"
+        },
+        {
+          "group": "Scarlet",
+          "walletNumber": "02",
+          "address": "0xd2Fb1Fa9b96d0666b5a9683fFCb966ddEeA7685c"
+        },
+        {
+          "group": "Scarlet",
+          "walletNumber": "03",
+          "address": "0x44029dCf2F9a5E6FFce0ED3b3fB3B81Aa3bC4989"
+        },
+        {
+          "group": "Scarlet",
+          "walletNumber": "04",
+          "address": "0x9C0Ea362C4716A9dA7C1dBAABF89bCA050E5ae85"
+        },
+        {
+          "group": "Scarlet",
+          "walletNumber": "05",
+          "address": "0xa5FA89A42fE084f49189A6357ef6FD9461525F91"
+        }
+      ]
+    },
+    "Lanre": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Lanre",
+          "walletNumber": "01",
+          "address": "0x87b37977ad3746C72771A88ffEC191f3b311c0bB"
+        },
+        {
+          "group": "Lanre",
+          "walletNumber": "02",
+          "address": "0xda4daB22820f77dC0afD2De1364A43Ba82d4ebE1"
+        },
+        {
+          "group": "Lanre",
+          "walletNumber": "03",
+          "address": "0x511F6dd83fFeAC1bba1120906EEE88a19436E495"
+        },
+        {
+          "group": "Lanre",
+          "walletNumber": "04",
+          "address": "0x688982505E90A68a45d37A8fc349C7f95d7Ed4cB"
+        },
+        {
+          "group": "Lanre",
+          "walletNumber": "05",
+          "address": "0x98e481358e51E3789313E84118F1c885cbd7bd36"
+        }
+      ]
+    },
+    "Sofiyah": {
+      "allocation": 5,
+      "wallets": [
+        {
+          "group": "Sofiyah",
+          "walletNumber": "01",
+          "address": "0x027d703d582b5fF026897A12f593a71530ec084f"
+        },
+        {
+          "group": "Sofiyah",
+          "walletNumber": "02",
+          "address": "0x2711104AE49e32e0D5237Ed54475270883A3c416"
+        },
+        {
+          "group": "Sofiyah",
+          "walletNumber": "03",
+          "address": "0xf6Bc2B1A3AC351338c6DA1cdEC248a6B38AAB469"
+        },
+        {
+          "group": "Sofiyah",
+          "walletNumber": "04",
+          "address": "0x154DcD034Bf4529d3CeCbB6f4f8f1359f10E10B3"
+        },
+        {
+          "group": "Sofiyah",
+          "walletNumber": "05",
+          "address": "0xa0fEC7b80664C44Bf8b3CfB7FE7F916B7240Cb06"
+        }
+      ]
+    }
+  }
+}
