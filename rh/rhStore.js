@@ -43,10 +43,16 @@ function requireDb() {
   return db;
 }
 
-// --- one-time seed from bundled whale list ---
+// --- seed from the bundled whale list ---
+// Runs on EVERY boot and unions in any seed address not already tracked — the
+// same semantics bot.js has always used for the mainnet WHALE_SEED loop. It used
+// to bail out early once `seeded` was set, which meant growing seed-wallets.json
+// was a silent no-op on any deploy that had already seeded once (Railway had).
+// Existing tracked entries are never removed; a wallet you /rhuntrack that is
+// still in the seed file WILL come back on the next boot — remove it from the
+// file too if you want it gone for good.
 export async function seedTrackedOnce() {
   const d = requireDb();
-  if (d.data.seeded && d.data.tracked.length) return { skipped: true, count: d.data.tracked.length };
   const seedPath = path.join(__dirname, "seed-wallets.json");
   let added = 0;
   try {

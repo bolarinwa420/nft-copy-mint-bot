@@ -414,5 +414,975 @@
   "tier": "unknown",
   "copyEnabled": true,
   "note": "reload-early-buyer"
+ },
+ {
+  "address": "0x2250267373a93670f29df5181dcaf63347a66cbe",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: GVC"
+ },
+ {
+  "address": "0x2fa8bea48652b60851a4b0b01586594acaf95607",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x332bf08c9df1f99b85af4f79c51f6118e5cfdbd9",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: REMILIO"
+ },
+ {
+  "address": "0x334d09927bb112b96fbc76e36da28f533a7450fd",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: PUDGY_PENGUINS, REMILIO"
+ },
+ {
+  "address": "0x4019b93f863c547128426db2eb40bf27d02109de",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x48ae0b628fcbbef756d5b2bc0e8e801330e87666",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x4df35e5430f1201ab824befd58e4c64732c9e0b9",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x5e610cddb12fdc98c2f2a7221f87e1d6107a989d",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: REMILIO"
+ },
+ {
+  "address": "0x60bee18b17fa940f80d2bfdb02ad90f95be1dbe3",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: FUNKARI"
+ },
+ {
+  "address": "0x6927c599c3b5538bf9ee80b1b0c3665ecd7a9599",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: PUDGY_PENGUINS, REMILIO"
+ },
+ {
+  "address": "0x70a39f36daa7fc7ede1c43c1c5e5ac2b8eae5c66",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: GVC"
+ },
+ {
+  "address": "0x7156d3f8dee0659e95a816c08ef5f9a937777777",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x74d7cc39d886bc064b9b278c2fb5b676948ff3ab",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: GVC"
+ },
+ {
+  "address": "0x81febb1cf0799e9526cbd6693149b5bca9c7512a",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x854c461ba1aa95bcb3ac11d8e902ee89983c6e21",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: FUNKARI"
+ },
+ {
+  "address": "0x8bde1a741cf045e5111cb20f0f849954c297c669",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: PUDGY_PENGUINS, REMILIO"
+ },
+ {
+  "address": "0x9a0f62b9a86187a03f4459d3130e9792eee8aeb9",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: GVC"
+ },
+ {
+  "address": "0xa0bc9f544453061b18202a377854ae28f837cd24",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: FUNKARI"
+ },
+ {
+  "address": "0xb89ffe5882a77b0d1fb91c00fc212409dcf241b9",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xc02992ee074f2a895945c0cea51620156f2ada96",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: PUDGY_PENGUINS, REMILIO"
+ },
+ {
+  "address": "0xea192a3c958f2dbe3efe0fbcce22ccec0a26f7a9",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: REMILIO"
+ },
+ {
+  "address": "0xf14992195590ddd8c3d9aecbfafe211343c536f6",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "note": "Blue-chip holder: PUDGY_PENGUINS, REMILIO"
+ },
+ {
+  "address": "0xfea9f2cd512ccb35d0ebf7098db6e967a0fb66df",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x047f606fd5b2baa5f5c6c4ab8958e45cb6b054b7",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x84cb570cfea8c6afd3b6c1ab491db754886bf8e7",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x590bcec117371e710a2fe8f5e76c347b391eeab8",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd61e09150afe3b0d8a51eadf2e9890e5ea20b12e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x887b86b6b6957f7bbea88b8cefd392f39236a88c",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x84f4b7424e1b0464f9c749725c1f34bed9aa8ada",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x0ba5cf020869f2e79fef77746b545a7694fd7da6",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x043526144c0d06d58db4d37920c38a5926273d2d",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x4b5509cff73f04a4baabbe17e307c9e5d6e772c0",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xbe11d80c27863c950485d269992dc086e9f397a9",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x3735ceadc251e005c8758e49757b0dac3420c82a",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xe210475c44be21740050426501585eef20319cb5",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xff2ec525d39bdc78c0e817178ee31ec1f70fcfc5",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xfc3c962fad2c1cc77f1a0d46e7b8a2de79a21774",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xa1df4db4e8e41fccf94c09273d7e5c37a6981ceb",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x46a8fa22ab3bc040f6c5a4d51cf0139639f3f4fd",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xfe35e15be885750d9b2363cbb6abdd57ac9c4c40",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x730aba725664974efb753ee72ca789541c733db4",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xc7f261245e9a2f1f33bab68a932c615d8deb2114",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x232b5ad09f558c39f6b2c05e01398d6dc6996924",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xaafed70e4b67c77dd756ba10379649241b1bcd1e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x8d6149715e866be6b9a83df42e5bdf7a5ddf91dd",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xbc13d137f5994b594983585210fff23b22f945ef",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xbee39b9e8a1e8aa4b92dcab680dbf29e50cb0f20",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xf58685e2dcf6700db6e7f302f697f2ead460261d",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xa658302c1172c9f54beb844f9f7ae0c7bdd402e4",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x2ff720c43a31c9819bd3b8192f917eddaa1bd9c1",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xf897d396199167e4f18dd29a2fe5ec85a97b8114",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x1e22df97e255f1276ce0a382d032e8de13d14bfe",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x7d5daf74424f3abd47a3ee3392baf7c5f9b716ec",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x705e8bbc3dcc7c6ad0c9705686acb73793a92521",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x151472a54dab0ce27b4631e36314f59305a32091",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x47788f2456cc9ff16d9f140d043727a2ae74061c",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x19856823a8406f730b235925940030240194cab3",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x7233e94acd6174ea72bf4f225f52ba079d2ab445",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x61b96071227a0b0b49bad114da686728b6123c49",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x384bed366f9259b1802f0da7daa93cb69abdbfd7",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xa122c6ee227b39c84f28284a16293c23feb5523f",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x9a0d4bca5e655afede36d4901ce720828fedc868",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x64f8f416cb68000f61dc1b1ea0d25ab2140ec0a0",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x358df43cf0140e2764093617eab129491501c636",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x11f7e996bc65f0aed55b827bc86c7780196df02e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd872b94cabb2c95ec49012b945ed14f1dff70b51",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x631534ae8c80be4236e93e7ff0b9f6a22be6e7d6",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xbdd65068d033d398eb249d390cd1f674b6cc3833",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x2c4223db98dad536bd8a09f77a8c679b891aa301",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x6560a1dcdaf7ccca52891ee836fe1804f5310196",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x1ecb70999b7c51ed131c14296697b69e3f03e42c",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x2bd81dc5ae9cdad75b1d47c37a4a6c6e6cf48e9b",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x955e14c2d841c29e10942afc24fba459ef14744e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xfe2a057a695bf89c7a0b5cc6e0a83919a9e15f01",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd2880248a441157e1df2b77da073b33a45e6121f",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xb4ca3f4cf57ade7337f6b502487e912eebd453af",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x975adf9190b45a8ca8367c6dd54df928c1fa8aa9",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x4af1f28c0367c82e063952527f477da78917d6dd",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd4aab164d71d51cf99fc8dd536c352b3fda4523d",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x0a0b16f543fb7d9986eac5284f0fd706c767c119",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x3837e93809e1c17d04d15f69deb43de89fab416b",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd971257522dfd90b786feee2ca14018fbb9b0b41",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xf9248c0a3af8c9c2d1db0f746a23acdf6569f6d6",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x970fdcf1778b0776d368f9178715f072eb4cdacb",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x4bc9c53390c373673a80b6daac2893d08b0fbc52",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x24b27f3b9f2e0dff4ae200a10f3ef5806ee0c2ba",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xc509fcd8a1582c98e3f555371845efe8dae4b942",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x74a4c85618c6a8e994b21eb9795f984100019781",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x5e7732a72d8667b9daf10eeb134240447a1bdc26",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x8b2d97c398ca8bdd2985f803d451521902b2ef36",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x0f99072ec822a04f76b189924f115b90f254a156",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x7eebc7c689b40ea833176af59955b2660ff2838b",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x14836d9589788ca6cae2873b5f7b61a4102b00f7",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xa78591d3cec9de55aa2a349728a98cfdffd69c47",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x5fb407c217ed9d4b1734661b234e08402c9bf15d",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xda171dc925af7d8923b17cf26e7b36efbc3d948a",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xb34f3cc8d738d1df115129ad36da50abd54f0dd5",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x9423e8565cfab041ff3541d65d48e71d1694b54e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x635db07ed5f56b8f6fef7de800f20f36c0127a69",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x5d0af24953f97ec5a142170199ba99ce4c78f7a3",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x14e6345ecb9a99d381c902e131e8f174e6f83ddc",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xdb17f84450e1650eedbffa0cf2b68b5b9daea758",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x40a01eed15c2a9cf5c4f1468dd45ff51ece863d8",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x509f0fb131a45efcdc9d5f5813edd6b8cd7cdf8e",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x6d5222ac84aed2da366264f3c38337b1e05a1174",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xfc7af206e1a69f7886fb47ff8e1287fff4406d03",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x023d5dcc012288ae0d07dec3af3f998226130b36",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x80fdbb6097ac17e5cab029189524b8c7a81af4e3",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x2af068cb6616c5639c0a787b82fe97fec9716b10",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xe9e049d75377c5da5a96656ee2a54d3171609d1b",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd62ca2a524bcea5a2ddf1c44a17f6c44ea075860",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xc5e8b0be048766cf7c5013866527c87e397a22c0",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x6b84829bd0fa227533d0662773ec86ebb0e8eeef",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xfc36db952de0156ad45a9c6654cab1ba07dadec2",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xa1f3aadf441b5d011c2b9f07b04f80eb8d72db98",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x1744a2165866fa920a39f174d067d5b4ab500e5b",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x8aabd20164de48f052042b3f0fccbbd31a4b4dad",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xd66f5db9dd10ddfd82d8c23d6d998c6814a87692",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0xc538b5ae5baf30060496a26156660e7f1ffa400c",
+  "tier": "unknown",
+  "copyEnabled": true
+ },
+ {
+  "address": "0x5ab2d1f5069dd2f9aeec3b0a8e923b1cdbe7fc44",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x01e2db782eee4d164217129922446786d73cd4c1",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xcd9aa0f51ae128575af8b62e14c5b2e2baf8a153",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xc47316a2708ff27f75592eec0ae30b205b44dc2f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x9f528e1dd7f389c57bddc9e904a146c2b25e9855",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x28057c5f0ed7f0e20f88a877baf676bff649622d",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x312a6a80c3c8c5b35cec17f190c6de0dff2352ca",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x2591fb2aba015adf5aa7a79d8d5b632a058e52e6",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x508f3e2b63f3750841c8bddbf93ac29f5c668148",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xa5038fe26ae625147889fee1850490e7504a28ec",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x5f4ce2fe1d6e1a273889038f47ee68f4418e5f24",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x4ffa66a441f667450a34435117bc7e6e5cb3a49c",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x00058c5151b462eb26663dd1da40d7c89efeb463",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x960f387ad70b663cec1b1d52cfe1269716acf196",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xb426cacd2485cfd59dc5bd9aa875bbb15ccfdba8",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x6a6536a9a883fc0f575fd0ee88957130f004dcd5",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x78aae117011eb35fb42959096e77f5b0f79064d4",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xb0444cd886b6a72daaf6a5b304ec4284cec9384f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xdc44816d18c1fa71d895a9cef9ee899fc5a2666b",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xaf791402cd9170c3eed200687e0cac8b5e8b0fce",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x7102ee4a64d1909a4ed928d8e252028c33e23c0b",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x10dc0417835bace30dd4afb05aa7590532a874e6",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xcdea19e6d247619ed5fefe47b4992ea577ad2142",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x539886fd5c9a30b8e4a2a0203d99f7202dbd3528",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xaafb164259d27122530aef535dcd059f5b3dc844",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xe48970a96b3162712477547bb416650c339869c4",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x7082ee6bb34a072a2fb0f46180d10bcc9a9c07d3",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x3e8ee7f508465840236e468354b28c62c7eeda57",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x2ef1b2567aa33e1ba07f4fbd1a297223df28bafa",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xbbf73287c2a446b3531848b3ee200c9bf0af803e",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x535faa541252d9650f1f8a8bbd88709fb8b55a1b",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x2aebd48a41ac9061b8e5f119ed477fb6168eb4e0",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x8c8248bc7f45ace05df27a739ee62e698070a1cf",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x2532f17705c241d66478fda4c20afa57f779124d",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x69423c543d5b3df3989acd1b4e848157187005a0",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xf2fcb326dedc26daf9330c8b8258ce2efffdd163",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x115a3d0034e153216d8a5a8e76e370fd749c2360",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x72769b82f5d29fade4bfda1c9f707d0322a17ed3",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x931a34ae3288fc0f8719875b6b3ef4440e1f6c52",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x73ff94a3809ad151162de2efc6ebf2552028bbc6",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x7ab7e6a777696e404b53260da72c57b31551ce98",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x9e8f85e5456e4e2cc27e6ae89cee31aa9b3e76a0",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x1795011ea0d47f3dbd757b77fdaa3f0366208237",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xb4b412db8183dcd05ee2a60b4b146a3ea3ccd853",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x73c923f810256cfee9fc7c26f544686e5e0fab5e",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xed64f2eff377e9b1d8df0b1d516e2fdff759f513",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x3433ee8c5b00b5a2e0d88dc02aa6961d245aeaa7",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x2f0d2f200fddc65835cb52a3a1259918e627289a",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xafa0adb782345aaa73d9341f6b5c0da0afcedec6",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xc62705eef429d15896b8022b43a9b9919b348f55",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xf6a36ea0ed1b8c6a570153c5bda9990101230da7",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xbd8a2ca4076d1b71153f5b6200dda354ff896c76",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xcd211569a108fdac74d729ba7358a743a3c2e08d",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x22a676b52392591bc6c7caf51c14b38f5e0f3716",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x3869d9abbdaf6644623cf42631591aa019bd29ab",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x5ad6fa3f35a6eaaf9c86f3f13b644dc7617f135f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xf54711eb8bd9321ae38e3ffbc401848f168f128f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xf287afb007dcd3032048d65fbd93b5d246fc18ac",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0xbffa316d6430bce0ba92c9996e488319a06d7f6f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x0db3d4d38008934612ae68be39927a2161e9a1ea",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "projectMarsInsider"
  }
 ]
