@@ -139,6 +139,8 @@ export async function diagnoseRhMint({ hash, from, to, nft }, provider, { capUsd
     nftNeeds: [],    // NFTs the whale gave up — not buyable by this module
     recent: [],
     totalUsd: null, withinCap: null, verdict: "",
+    // Machine-readable version of `steps`, for the replicator (rhReplicate.js).
+    plan: { buyTxs: {}, approvals: [], priorTxs: [] },
   };
   if (result.whaleReverted) {
     result.verdict = "The whale's own mint REVERTED — there is nothing to copy.";
@@ -203,7 +205,7 @@ export async function diagnoseRhMint({ hash, from, to, nft }, provider, { capUsd
       spendSteps.push({
         block: log.blockNumber, token, amount, sink, hash: log.transactionHash,
         kind: burned ? (toMint ? "burned via the mint contract" : "burned") : "sent to the mint contract",
-        via: txTo && txTo !== sink ? txTo : null,
+        via: txTo && txTo !== sink ? txTo : null, txTo,
       });
     } else if (log.topics.length === 4) {
       result.nftNeeds.push({ token, id: BigInt(log.topics[3]).toString(), sink, hash: log.transactionHash, when: burned ? "burned earlier" : "sent earlier" });
@@ -217,7 +219,9 @@ export async function diagnoseRhMint({ hash, from, to, nft }, provider, { capUsd
 
     const buys = logs.filter((l) => l.address.toLowerCase() === token && l.topics[0] === TRANSFER &&
       l.topics.length === 3 && addrOf(l.topics[2]) === whale && l.transactionHash !== hash);
-    for (const h of [...new Set(buys.map((l) => l.transactionHash))].slice(-3)) {
+    const buyHashes = [...new Set(buys.map((l) => l.transactionHash))].slice(-3);
+    result.plan.buyTxs[token] = [...buyHashes].reverse();   // newest first
+    for (const h of buyHashes) {
       const got = buys.filter((l) => l.transactionHash === h).reduce((s, l) => s + BigInt(l.data), 0n);
       let paid = "";
       try {
@@ -250,8 +254,18 @@ export async function diagnoseRhMint({ hash, from, to, nft }, provider, { capUsd
     for (const l of logs) {
       if (l.topics[0] !== APPROVAL || l.topics.length !== 3 || l.address.toLowerCase() !== token) continue;
       result.steps.push({ block: l.blockNumber, text: `Approved ${meta.symbol} to \`${addrOf(l.topics[2])}\``, hash: l.transactionHash });
+      result.plan.approvals.push({ token, spender: addrOf(l.topics[2]), logged: true });
     }
   }
+
+  // Whoever pulled the token must have been approved, even if that approval is
+  // older than the lookback: the mint contract, or the contract of the earlier tx.
+  for (const s of spendSteps) {
+    const spender = s.hash === hash ? to.toLowerCase() : s.txTo;
+    if (spender && spender !== s.token) result.plan.approvals.push({ token: s.token, spender, logged: false });
+  }
+  result.plan.priorTxs = [...new Set(spendSteps.filter((s) => s.hash !== hash)
+    .sort((a, b) => a.block - b.block).map((s) => s.hash))];
 
   for (const s of spendSteps) {
     const meta = await tokenMeta(provider, s.token);
@@ -332,15 +346,17 @@ const lastDiagnosed = new Map();
 const SELF_EXPLAINED = /MaxSupply|MaxTokenSupplyForStage|sold ?out|NotActive/i;
 
 export async function diagnoseAndNotify({ whaleTx, nft, revert }, provider, notify, capUsd) {
-  if (revert && SELF_EXPLAINED.test(String(revert))) return;
+  if (revert && SELF_EXPLAINED.test(String(revert))) return null;
   const key = (nft || whaleTx.to || "").toLowerCase();
   const now = Date.now();
-  if (now - (lastDiagnosed.get(key) || 0) < COOLDOWN_MS) return;
+  if (now - (lastDiagnosed.get(key) || 0) < COOLDOWN_MS) return null;
   lastDiagnosed.set(key, now);
   try {
     const r = await diagnoseRhMint({ hash: whaleTx.hash, from: whaleTx.from, to: whaleTx.to, nft }, provider, { capUsd });
     await notify(formatRhDiagnosis(r, { revert }), null);
+    return r;
   } catch (e) {
     console.warn("[RH] diagnosis error:", e.message);
+    return null;
   }
 }

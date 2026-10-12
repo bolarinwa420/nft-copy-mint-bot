@@ -23,6 +23,7 @@ const defaultData = {
     useMainWallet: true,  // prepend the MAIN wallet (MAIN_PRIVATE_KEY) to the pool
     alertChatId: null,    // falls back to mainnet ALERT_CHAT_ID at call site
     prereqCapUsd: 1.2,    // most we'd spend per wallet on a token a mint requires
+    prereqReplicate: true,// plan + simulate a replay of the whale's buy → burn → mint path
   },
   mintLog: [],        // [{ contract, wallet, txHash, valueNative, timestamp }]
 };

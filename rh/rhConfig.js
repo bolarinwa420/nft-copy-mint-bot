@@ -12,6 +12,10 @@ export const RH_DEX = {
   v2Router: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
   usdg: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  // Used by the replicator to rebuild a whale's swap route (v2 / v3 / v4 hops).
+  universalRouter: "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+  poolManager: "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+  stateView: "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
 };
 
 // How often to poll for new blocks. RH is HTTP-only (no public wss), and far less
