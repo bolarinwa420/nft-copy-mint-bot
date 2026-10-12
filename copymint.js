@@ -572,13 +572,9 @@ async function handleMintDetected({ whale, contract, tx }) {
     }
   }
 
-  // Main wallet goes first: the sub-wallets only start once its tx is broadcast,
-  // or once it has bailed (skip, failed simulation, send error).
-  let mainOut;
-  const mainDone = new Promise((resolve) => { mainOut = resolve; });
   await Promise.all([
-    executeCopyMint(tx, settings.mevShield, mainOut).finally(mainOut),
-    mainDone.then(() => executeSubWalletMints(tx)),
+    executeCopyMint(tx, settings.mevShield),
+    executeSubWalletMints(tx),
   ]);
 }
 
@@ -625,9 +621,7 @@ function looksLikeSignedMint(data) {
   return false;
 }
 
-// `onBroadcast` marks a copy-mint race: the tx is then sent publicly with a raised
-// tip instead of through Flashbots, which waits a full block per attempt.
-export async function executeCopyMint(whaleTx, useMevShield = true, onBroadcast = null) {
+export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
   const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
   const adj = await adjustMintQuantity(
@@ -643,10 +637,9 @@ export async function executeCopyMint(whaleTx, useMevShield = true, onBroadcast 
   }
 
   if (newQty !== null && newQty !== originalQty) {
-    // Not awaited — Telegram latency must not sit between detection and broadcast.
-    telegramNotify(
+    await telegramNotify(
       `⚠️ *Quantity Adjusted (Main Wallet)*\n\nWhale minted ×${originalQty} → minting ×${newQty}`
-    ).catch(() => {});
+    );
   }
 
   const mintTx = {
@@ -723,11 +716,6 @@ export async function executeCopyMint(whaleTx, useMevShield = true, onBroadcast 
       return;
     }
   }
-
-  // Simulation passed and the main wallet is about to send — let the sub-wallets
-  // start now. They still have their own quantity and balance checks to run, so
-  // the main wallet's tx is out ahead of theirs.
-  onBroadcast?.();
 
   try {
     let txHash;
