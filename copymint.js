@@ -161,11 +161,12 @@ function getTargetQty(priceUsdPerNft) {
   return 1;
 }
 
-// Totally-free mints (0 ETH): grab the full per-wallet cap, but never blindly more
-// than this ceiling (some caps are uint16-max = "unlimited"). If the cap can't be
-// read at all, fall back to this conservative qty instead of guessing the whale's.
-const FREE_MINT_MAX = 10;
-const FREE_MINT_FALLBACK_QTY = 3;
+// Totally-free mints (0 ETH): take the MAX the contract will give a wallet. A
+// readable cap is used directly; an unreadable one is found by simulating down a
+// ladder from this ceiling (some caps are uint16-max = "unlimited", so there has
+// to be one). Simulation, not guessing, is what keeps this from reverting.
+const FREE_MINT_MAX = 50;
+const FREE_QTY_LADDER = [20, 10, 5, 3, 2, 1];
 
 // Check if the contract enforces a per-wallet limit. Runs all probes in parallel; cached.
 const walletLimitCache = new Map();
@@ -298,7 +299,19 @@ async function findFreeTokenIds(contractAddress, startId, count = 1, maxScan = 3
   return freeIds;
 }
 
-async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = null) {
+// Gas limit for a copy: the whale's limit +20% covers anything up to their qty.
+// Minting MORE than they did needs more gas — use the estimate taken at the
+// calibrated qty, else scale the whale's limit by the qty ratio.
+function pickGasLimit(whaleTx, adj) {
+  const base = whaleTx.gas ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2)) : 300000n;
+  if (!adj?.originalQty || !adj?.newQty || adj.newQty <= adj.originalQty) return base;
+  if (adj.gasEstimate) return (adj.gasEstimate * 130n) / 100n;
+  return (base * BigInt(adj.newQty)) / BigInt(adj.originalQty);
+}
+
+// simFrom = the wallet to calibrate a free mint against (its own minted-count
+// matters). Without it a free mint with an unreadable cap copies the whale's qty.
+async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = null, simFrom = null) {
   const data = rawData || "0x";
   const value = BigInt(txValue || 0);
 
@@ -338,13 +351,50 @@ async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = nu
     walletCap = await checkMaxPerWallet(contractAddress);
   }
 
+  // Calldata for an arbitrary quantity (only meaningful when originalQty was found).
+  const encodeQty = (qty) => {
+    if (qty === originalQty) return data;
+    if (isSeaDrop) {
+      try {
+        const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
+        return SEADROP_IFACE.encodeFunctionData("mintPublic", [
+          decoded.nftContract,
+          decoded.feeRecipient || OPENSEA_FEE_RECIPIENT,
+          ethers.ZeroAddress,
+          qty,
+        ]);
+      } catch { return data; }
+    }
+    if (data.length === 74) return data.slice(0, 10) + qty.toString(16).padStart(64, "0");
+    return data.slice(0, -64) + qty.toString(16).padStart(64, "0");
+  };
+
   // ── Decide target quantity ──
   let newQty;
+  let gasEstimate = null;
   if (isFree) {
-    // Totally free (0 ETH, no $ value): mint the FULL per-wallet max, clamped to a
-    // sane ceiling. If the cap can't be read, use a conservative fallback rather
-    // than copying the whale's qty blind (that's what reverted PLOP: qty 7 vs cap 1).
-    newQty = walletCap !== null ? Math.min(walletCap, FREE_MINT_MAX) : FREE_MINT_FALLBACK_QTY;
+    // Totally free (0 ETH): take the most this wallet can get. Start from the cap
+    // (or the ceiling when the cap is unreadable) and step down until a quantity
+    // simulates clean — so a per-wallet/per-tx limit we couldn't read costs a sim,
+    // not a revert (PLOP: whale's qty 7 vs cap 1).
+    const top = walletCap !== null ? Math.min(walletCap, FREE_MINT_MAX) : FREE_MINT_MAX;
+    newQty = walletCap !== null ? top : (originalQty || 1);
+    if (simFrom && contractAddress && originalQty !== null) {
+      const ladder = [...new Set([top, originalQty, ...FREE_QTY_LADDER])]
+        .filter((q) => q >= 1 && q <= top)
+        .sort((a, b) => b - a);
+      for (const q of ladder) {
+        const call = { to: contractAddress, data: fixSeaDropCalldata(contractAddress, encodeQty(q)), value: 0n, from: simFrom };
+        try {
+          await provider.call(call);
+          newQty = q;
+          if (q > originalQty) {
+            try { gasEstimate = await provider.estimateGas(call); } catch {}
+          }
+          break;
+        } catch {}
+      }
+    }
   } else {
     // Paid: enforce USD ceiling, then my preset tier qty.
     const ethUsd = await getEthUsdPrice();
@@ -378,25 +428,9 @@ async function adjustMintQuantity(rawData, txValue, isFree, contractAddress = nu
   }
 
   // Re-encode calldata with adjusted quantity
-  let newData = data;
-  if (isSeaDrop) {
-    try {
-      const decoded = SEADROP_IFACE.decodeFunctionData("mintPublic", data);
-      newData = SEADROP_IFACE.encodeFunctionData("mintPublic", [
-        decoded.nftContract,
-        decoded.feeRecipient || OPENSEA_FEE_RECIPIENT,
-        ethers.ZeroAddress,
-        newQty,
-      ]);
-    } catch {}
-  } else if (data.length === 74) {
-    newData = data.slice(0, 10) + newQty.toString(16).padStart(64, "0");
-  } else {
-    newData = data.slice(0, -64) + newQty.toString(16).padStart(64, "0");
-  }
-
+  const newData = encodeQty(newQty);
   const newValue = pricePerNft * BigInt(newQty);
-  return { data: newData, value: newValue, skip: false, originalQty, newQty };
+  return { data: newData, value: newValue, skip: false, originalQty, newQty, gasEstimate };
 }
 
 export async function initCopyMint(ethProvider, signer, notifyFn, askApprovalFn) {
@@ -590,8 +624,10 @@ function looksLikeSignedMint(data) {
 export async function executeCopyMint(whaleTx, useMevShield = true) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
   const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
-  const { data: adjData, value: adjValue, skip, originalQty, newQty } =
-    await adjustMintQuantity(rawData, rawTxValue, rawTxValue === 0n, whaleTx.to);
+  const adj = await adjustMintQuantity(
+    rawData, rawTxValue, rawTxValue === 0n, whaleTx.to, await mainSigner.getAddress()
+  );
+  const { data: adjData, value: adjValue, skip, originalQty, newQty } = adj;
 
   if (skip) {
     await telegramNotify(
@@ -610,9 +646,7 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     to: whaleTx.to,
     data: fixSeaDropCalldata(whaleTx.to, adjData),
     value: adjValue,
-    gasLimit: whaleTx.gas
-      ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
-      : 300000n,
+    gasLimit: pickGasLimit(whaleTx, adj),
   };
 
   // Simulate before sending — catches IncorrectPayment, reverts, etc. at zero cost
@@ -733,6 +767,49 @@ function buildSingleMintData(originalData) {
   return data;
 }
 
+// All wallet balances in ONE eth_call via Multicall3. The old per-wallet
+// getBalance fan-out 429'd on the free-tier sim RPC, and every failed lookup was
+// counted as "unfunded" — 70/100 wallets dropped that way on Dumb Wojapes.
+// Returns Map(lowercased address → balance | null if the lookup failed).
+const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const MULTICALL3_IFACE = new ethers.Interface([
+  "function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])",
+  "function getEthBalance(address addr) view returns (uint256)",
+]);
+
+async function getBalances(addresses) {
+  const out = new Map();
+  if (addresses.length === 0) return out;
+  try {
+    const calls = addresses.map((a) => ({
+      target: MULTICALL3,
+      allowFailure: true,
+      callData: MULTICALL3_IFACE.encodeFunctionData("getEthBalance", [a]),
+    }));
+    const raw = await provider.call({
+      to: MULTICALL3,
+      data: MULTICALL3_IFACE.encodeFunctionData("aggregate3", [calls]),
+    });
+    const [res] = MULTICALL3_IFACE.decodeFunctionResult("aggregate3", raw);
+    addresses.forEach((a, i) => {
+      out.set(a.toLowerCase(), res[i].success ? BigInt(res[i].returnData) : null);
+    });
+    return out;
+  } catch (e) {
+    console.warn("[Balances] multicall failed, falling back to per-wallet:", e.shortMessage || e.message);
+  }
+  // Fallback: one at a time with retries — slow, but never mistakes a 429 for an empty wallet.
+  for (const a of addresses) {
+    let bal = null;
+    for (let attempt = 0; attempt < 3 && bal === null; attempt++) {
+      try { bal = await provider.getBalance(a); }
+      catch { await new Promise((r) => setTimeout(r, 300 * (attempt + 1))); }
+    }
+    out.set(a.toLowerCase(), bal);
+  }
+  return out;
+}
+
 async function executeSubWalletMints(whaleTx, groupName = null) {
   const signers = groupName
     ? getGroupSigners(groupName, provider)
@@ -740,13 +817,16 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
   if (signers.length === 0) return;
 
   const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
-  const { data: adjSubData, value: txValue, skip: subSkip, originalQty: subOrigQty, newQty: subNewQty } =
-    await adjustMintQuantity(
-      whaleTx.input || whaleTx.data || "0x",
-      rawTxValue,
-      rawTxValue === 0n,
-      whaleTx.to
-    );
+  // Free mints are calibrated against the first sub-wallet — they all start from
+  // the same minted-count on a fresh drop.
+  const subAdj = await adjustMintQuantity(
+    whaleTx.input || whaleTx.data || "0x",
+    rawTxValue,
+    rawTxValue === 0n,
+    whaleTx.to,
+    signers[0].address
+  );
+  const { data: adjSubData, value: txValue, skip: subSkip, originalQty: subOrigQty, newQty: subNewQty } = subAdj;
 
   if (subSkip) {
     await telegramNotify(
@@ -770,36 +850,19 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     : ethers.parseUnits("2", "gwei");
 
   // Gas buffer = actual estimated gas cost based on live gas price
-  const gasLimit = whaleTx.gas
-    ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
-    : 300000n;
+  const gasLimit = pickGasLimit(whaleTx, subAdj);
   const GAS_BUFFER = (maxFeePerGas * gasLimit * 120n) / 100n; // +20% safety margin
 
-  // Batch balance checks (10 at a time) to avoid Alchemy rate limits
-  const BATCH_SIZE = 10;
   const funded = [];
   let rpcErrors = 0;
   let belowThreshold = 0;
 
-  for (let i = 0; i < signers.length; i += BATCH_SIZE) {
-    const batch = signers.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (signer) => {
-        try {
-          const balance = await provider.getBalance(signer.address);
-          if (balance >= txValue + GAS_BUFFER) return signer;
-          belowThreshold++;
-          return null;
-        } catch {
-          rpcErrors++;
-          return null;
-        }
-      })
-    );
-    funded.push(...results.filter(Boolean));
-    if (i + BATCH_SIZE < signers.length) {
-      await new Promise(r => setTimeout(r, 200)); // small pause between batches
-    }
+  const balances = await getBalances(signers.map((s) => s.address));
+  for (const signer of signers) {
+    const balance = balances.get(signer.address.toLowerCase());
+    if (balance == null) rpcErrors++;
+    else if (balance >= txValue + GAS_BUFFER) funded.push(signer);
+    else belowThreshold++;
   }
 
   if (funded.length === 0) {
@@ -818,9 +881,7 @@ async function executeSubWalletMints(whaleTx, groupName = null) {
     to: whaleTx.to,
     data: fixedSubData,
     value: txValue,
-    gasLimit: whaleTx.gas
-      ? BigInt(Math.floor(Number(BigInt(whaleTx.gas)) * 1.2))
-      : 300000n,
+    gasLimit,
     type: 2,
     maxFeePerGas,
     maxPriorityFeePerGas,
@@ -917,16 +978,8 @@ export async function executeManualMint(contractAddress, calldata, valueEth, gro
     : ethers.parseUnits("2", "gwei");
   const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n; // dynamic: based on live gas price
 
-  const funded = (
-    await Promise.all(
-      signers.map(async (signer) => {
-        try {
-          const balance = await provider.getBalance(signer.address);
-          return balance >= value + GAS_BUFFER ? signer : null;
-        } catch { return null; }
-      })
-    )
-  ).filter(Boolean);
+  const balances = await getBalances(signers.map((s) => s.address));
+  const funded = signers.filter((s) => (balances.get(s.address.toLowerCase()) ?? -1n) >= value + GAS_BUFFER);
 
   if (funded.length === 0) {
     throw new Error(`No wallets have enough ETH in ${groupName ? `group "${groupName}"` : "sub-wallets"}`);
@@ -980,16 +1033,8 @@ export async function executePerWalletMint(contractAddress, calldataFn, valueEth
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
   const GAS_BUFFER = (maxFeePerGas * 300000n * 120n) / 100n;
 
-  const funded = (
-    await Promise.all(
-      signers.map(async (signer) => {
-        try {
-          const balance = await provider.getBalance(signer.address);
-          return balance >= value + GAS_BUFFER ? signer : null;
-        } catch { return null; }
-      })
-    )
-  ).filter(Boolean);
+  const balances = await getBalances(signers.map((s) => s.address));
+  const funded = signers.filter((s) => (balances.get(s.address.toLowerCase()) ?? -1n) >= value + GAS_BUFFER);
 
   if (funded.length === 0) throw new Error("No wallets have enough ETH");
 
