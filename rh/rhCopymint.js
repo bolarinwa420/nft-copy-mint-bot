@@ -194,12 +194,20 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
 
   // Whale mints → main wallet copies the whale → sub-wallets copy the main wallet.
   // The main wallet goes out alone first; the sub-wallets follow with the same
-  // call only if it was sent. With the main wallet out of the pool, all fire as before.
+  // call only once its mint has CONFIRMED. With the main wallet out of the pool,
+  // all fire as before.
   const chunks = mainLeads ? [[signers[0]]] : [];
   for (let i = chunks.length; i < signers.length; i += BATCH) chunks.push(signers.slice(i, i + BATCH));
 
   for (const chunk of chunks) {
-    if (mainLeads && chunk !== chunks[0] && !sent) break;
+    if (mainLeads && chunk === chunks[1]) {
+      const mainRcpt = sent ? await withTimeout(pending[0].resp.wait(1).catch(() => null), RECEIPT_TIMEOUT_MS) : null;
+      if (mainRcpt?.status !== 1) {
+        if (sent) await notify(`🟣 *RH: main wallet's mint did not confirm — sub-wallets held back*
+Contract: \`${nftAddr}\``, null);
+        break;
+      }
+    }
     await Promise.allSettled(chunk.map(async (signer) => {
       const from = await signer.getAddress();
       const txReq = { to, data: fireData, value: fireValue, ...gas, ...(gasLimit ? { gasLimit } : {}) };

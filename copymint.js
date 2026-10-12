@@ -574,12 +574,30 @@ async function handleMintDetected({ whale, contract, tx }) {
 
   // Whale mints → main wallet copies the whale → sub-wallets copy the main wallet.
   // The sub-wallets replay the main wallet's own tx and only start once it has
-  // been sent; if the main wallet doesn't mint, neither do they.
+  // CONFIRMED on-chain; if the main wallet doesn't mint, neither do they.
   let subs = null;
   await executeCopyMint(tx, settings.mevShield, (mainTx) => {
-    subs = executeSubWalletMints(mainTx).catch((e) => console.error("[CopyMint] Sub-wallets failed:", e.message));
+    subs = mainMintConfirmed(mainTx.hash)
+      .then((ok) => ok
+        ? executeSubWalletMints(mainTx)
+        : telegramNotify(`⏸ *Sub-Wallets — Held Back*
+
+The main wallet's mint did not confirm, so the sub-wallets did not copy it.`))
+      .catch((e) => console.error("[CopyMint] Sub-wallets failed:", e.message));
   });
   await subs;
+}
+
+// True once the main wallet's mint is mined and succeeded. A revert, or no
+// receipt within the wait, is false.
+const MAIN_CONFIRM_TIMEOUT_MS = 180000;
+async function mainMintConfirmed(txHash) {
+  try {
+    const rcpt = await provider.waitForTransaction(txHash, 1, MAIN_CONFIRM_TIMEOUT_MS);
+    return rcpt?.status === 1;
+  } catch {
+    return false;
+  }
 }
 
 function waitForApproval(mintId) {
