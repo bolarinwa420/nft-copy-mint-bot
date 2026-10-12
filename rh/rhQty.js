@@ -148,7 +148,10 @@ export async function rhAdjustQuantity(rawData, txValue, provider) {
     // (integer division can otherwise shave wei off the total).
     const keepWhaleValue = priceSource === "whale" && qty === originalQty;
     const v2 = keepWhaleValue ? value : pricePerNft * BigInt(qty);
-    if (qty === originalQty) return { data, value: v2 };
+    // SeaDrop is never replayed verbatim, even at the whale's own qty: if their
+    // calldata names a minterIfNotPayer, we'd be minting FOR them as a payer the
+    // drop never allowed → PayerNotAllowed. Always re-encode with address(0).
+    if (qty === originalQty && !isSeaDrop) return { data, value: v2 };
 
     let d2 = data;
     if (isSeaDrop) {
