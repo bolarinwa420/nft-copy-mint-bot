@@ -77,8 +77,9 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   // Firing pool = [main wallet?] + 100 sub-wallets. walletCount slices from the top,
   // so with useMainWallet=true and walletCount=1 the ONLY wallet fired is main.
   let pool = getAllSigners(provider);
+  let mainFirst = false;
   if (s.useMainWallet && process.env.MAIN_PRIVATE_KEY) {
-    try { pool = [new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider), ...pool]; }
+    try { pool = [new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider), ...pool]; mainFirst = true; }
     catch (e) { console.warn("[RH] main wallet signer build failed:", e.message); }
   }
   const signers = pool.slice(0, Math.max(1, Math.min(s.walletCount || 100, pool.length)));
@@ -191,8 +192,12 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   const revertReasons = new Map();
   const pending = [];
 
-  for (let i = 0; i < signers.length; i += BATCH) {
-    const chunk = signers.slice(i, i + BATCH);
+  // The main wallet is broadcast on its own before any sub-wallet starts, so it
+  // is never queued behind them when a drop has only a few mints left.
+  const chunks = mainFirst ? [[signers[0]]] : [];
+  for (let i = chunks.length; i < signers.length; i += BATCH) chunks.push(signers.slice(i, i + BATCH));
+
+  for (const chunk of chunks) {
     await Promise.allSettled(chunk.map(async (signer) => {
       const from = await signer.getAddress();
       const txReq = { to, data: fireData, value: fireValue, ...gas, ...(gasLimit ? { gasLimit } : {}) };
