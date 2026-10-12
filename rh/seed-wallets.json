@@ -1384,5 +1384,125 @@
   "tier": "unknown",
   "copyEnabled": true,
   "group": "projectMarsInsider"
+ },
+ {
+  "address": "0x40699cf5c05b0da76ab1f2c9308a5c0aafa916df",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x66003b1adb33f45a77ddd41d0d4c1fceb8d49f93",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xef08bc9a77fab06f29d1afa16ae69c9cfb844a39",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x5ffe976890546ca78457a3f5e030a2a7970b78e9",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x5c6f5b55bc395f12bc17a573e9ec685b3a9d5e8b",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xf4f891d559e970cf458895c61d2a46b338f86fae",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x7b02233d521c867f51eba8a723ab16f0a925396c",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x73f5b330e52f895893cc4f0bf3cf763f7ab5ef5f",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x0e661fe9ecd6af4fe91e302dae44ffc0dd220588",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x271398d254df10452f2150a9dfc988a674d6649c",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x31bed8d05096d17b1779a7936237c822258faa76",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xa96fcb468bdb35c61278855e32ec54526c962895",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x5f6d570a9f5b8cb1e9cd24d0c6dbd1d9c1dc710d",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xdda3d4bfd5dea9343bebb8e2d0f463782fcda665",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x4e5089c3ef108ef46baa06a88abbaad78f7a4b89",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x783ba94f52ccb41bf33b13d8005adcc206322584",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x491c2d3b02d06dea5f4964820b6b531f8bcaaeb4",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xe93afbebdbe6060be5e0a67ec6442da3ba6ae472",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0x5596678f93cb08fa7a138e3e8955497a7bc9e07e",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
+ },
+ {
+  "address": "0xecce15addc5dd58ecd2a57a33f216003e4026b15",
+  "tier": "unknown",
+  "copyEnabled": true,
+  "group": "courierEarly"
  }
 ]
