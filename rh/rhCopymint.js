@@ -77,8 +77,9 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   // Firing pool = [main wallet?] + 100 sub-wallets. walletCount slices from the top,
   // so with useMainWallet=true and walletCount=1 the ONLY wallet fired is main.
   let pool = getAllSigners(provider);
+  let mainLeads = false;
   if (s.useMainWallet && process.env.MAIN_PRIVATE_KEY) {
-    try { pool = [new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider), ...pool]; }
+    try { pool = [new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider), ...pool]; mainLeads = true; }
     catch (e) { console.warn("[RH] main wallet signer build failed:", e.message); }
   }
   const signers = pool.slice(0, Math.max(1, Math.min(s.walletCount || 100, pool.length)));
@@ -191,8 +192,14 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   const revertReasons = new Map();
   const pending = [];
 
-  for (let i = 0; i < signers.length; i += BATCH) {
-    const chunk = signers.slice(i, i + BATCH);
+  // Whale mints → main wallet copies the whale → sub-wallets copy the main wallet.
+  // The main wallet goes out alone first; the sub-wallets follow with the same
+  // call only if it was sent. With the main wallet out of the pool, all fire as before.
+  const chunks = mainLeads ? [[signers[0]]] : [];
+  for (let i = chunks.length; i < signers.length; i += BATCH) chunks.push(signers.slice(i, i + BATCH));
+
+  for (const chunk of chunks) {
+    if (mainLeads && chunk !== chunks[0] && !sent) break;
     await Promise.allSettled(chunk.map(async (signer) => {
       const from = await signer.getAddress();
       const txReq = { to, data: fireData, value: fireValue, ...gas, ...(gasLimit ? { gasLimit } : {}) };

@@ -572,10 +572,14 @@ async function handleMintDetected({ whale, contract, tx }) {
     }
   }
 
-  await Promise.all([
-    executeCopyMint(tx, settings.mevShield),
-    executeSubWalletMints(tx),
-  ]);
+  // Whale mints → main wallet copies the whale → sub-wallets copy the main wallet.
+  // The sub-wallets replay the main wallet's own tx and only start once it has
+  // been sent; if the main wallet doesn't mint, neither do they.
+  let subs = null;
+  await executeCopyMint(tx, settings.mevShield, (mainTx) => {
+    subs = executeSubWalletMints(mainTx).catch((e) => console.error("[CopyMint] Sub-wallets failed:", e.message));
+  });
+  await subs;
 }
 
 function waitForApproval(mintId) {
@@ -621,7 +625,9 @@ function looksLikeSignedMint(data) {
   return false;
 }
 
-export async function executeCopyMint(whaleTx, useMevShield = true) {
+// `onMainSent(mainTx)` fires as soon as the main wallet's mint is out, with that
+// mint in the same shape as a whale tx so the sub-wallets can copy it.
+export async function executeCopyMint(whaleTx, useMevShield = true, onMainSent = null) {
   const rawData = whaleTx.input || whaleTx.data || "0x";
   const rawTxValue = whaleTx.value ? BigInt(whaleTx.value) : 0n;
   const adj = await adjustMintQuantity(
@@ -727,6 +733,10 @@ export async function executeCopyMint(whaleTx, useMevShield = true) {
     }
 
     const mainAddr = await mainSigner.getAddress();
+    onMainSent?.({
+      hash: txHash, from: mainAddr, to: mintTx.to,
+      input: mintTx.data, value: mintTx.value.toString(), gas: mintTx.gasLimit.toString(),
+    });
     const nftContract = getNftContract(mintTx.to, mintTx.data);
     const collectionName = await getCollectionName(nftContract);
     await logMint({
