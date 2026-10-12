@@ -100,16 +100,25 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
   let fireData = data, fireValue = value, fireQty = adj.newQty, lastRevert = null, calibrated = false;
   let gasLimit = null;
 
-  for (const qty of candidates) {
+  // Sim the whole ladder at once and take the highest quantity that passes — a
+  // free mint now starts from the ceiling, and walking 8 steps one by one would
+  // cost seconds on a 1-per-wallet drop.
+  const probes = await Promise.all(candidates.map(async (qty) => {
     const built = adj.reencode ? adj.reencode(qty) : { data, value };
-    if (perWalletCapExceeded(built.value, s)) { lastRevert = `over hard cap at qty ${qty}`; continue; }
+    if (perWalletCapExceeded(built.value, s)) return { qty, ok: false, why: `over hard cap at qty ${qty}` };
     try {
       await simulate(provider, { to, data: built.data, value: built.value, from: probeFrom });
-      fireData = built.data; fireValue = built.value; fireQty = qty; calibrated = true;
-      break;
+      return { qty, ok: true, built };
     } catch (e) {
-      lastRevert = decodeRhRevert(e);
+      return { qty, ok: false, why: decodeRhRevert(e) };
     }
+  }));
+  const best = probes.find((p) => p.ok);   // candidates are sorted high → low
+  if (best) {
+    fireData = best.built.data; fireValue = best.built.value; fireQty = best.qty; calibrated = true;
+    lastRevert = probes.find((p) => !p.ok && p.qty > best.qty)?.why ?? null;
+  } else {
+    lastRevert = probes[probes.length - 1]?.why ?? null;
   }
 
   // Estimate the limit ONCE off the calibrated call. Sends must carry an explicit
@@ -307,7 +316,7 @@ async function getCollectionName(provider, addr) {
 function qtyLadder(adj) {
   if (adj.newQty == null || !adj.reencode) return [];
   const target = adj.newQty;
-  const steps = [target, adj.originalQty, 5, 3, 2, 1]
+  const steps = [target, adj.originalQty, 20, 10, 5, 3, 2, 1]
     .filter((q) => Number.isInteger(q) && q >= 1 && q <= target);
   return [...new Set(steps)].sort((a, b) => b - a);
 }

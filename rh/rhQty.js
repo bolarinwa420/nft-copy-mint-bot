@@ -3,7 +3,7 @@
 // copymint.js) so the mainnet path stays untouched.
 //
 // Ladder (price per NFT, USD):
-//   free ($0)        → mint per-wallet cap (max), clamped to freeMintMax
+//   free ($0)        → max the contract allows (cap, or highest qty that sims), up to freeMintMax
 //   $0.001 – $0.099  → 10
 //   $0.10  – $0.30   → 3
 //   $0.31  – $0.50   → 2
@@ -118,11 +118,12 @@ export async function rhAdjustQuantity(rawData, txValue, provider) {
   const isFreeNow = pricePerNft === 0n;
 
   // ── decide target quantity via the ladder ──
-  const FREE_MAX = Number(s.freeMintMax || 10);
-  const FREE_FALLBACK = Number(s.freeMintFallback || 3);
+  const FREE_MAX = Number(s.freeMintMax || 50);
   let newQty, priceUsd = 0;
   if (isFreeNow) {
-    newQty = cap !== null ? Math.min(cap, FREE_MAX) : FREE_FALLBACK;
+    // Free → take the max. Cap unreadable → aim at the ceiling and let the
+    // executor's sim ladder find the highest quantity the contract accepts.
+    newQty = cap !== null ? Math.min(cap, FREE_MAX) : FREE_MAX;
   } else {
     const ethUsd = await getEthUsdPrice();
     priceUsd = parseFloat(ethers.formatEther(pricePerNft)) * ethUsd;

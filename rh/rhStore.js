@@ -18,8 +18,7 @@ const defaultData = {
     gasCeilingGwei: 5,    // hard cap on gas price (RH is cheap + uncontested)
     maxMintNative: "0.05",// per-wallet spend ceiling in native token; skip above
     allowFreeMints: true,
-    freeMintMax: 10,      // free mints: grab per-wallet cap, clamped to this
-    freeMintFallback: 3,  // free mint + cap unreadable → this many
+    freeMintMax: 50,      // free mints: take the max the contract allows, up to this
     walletCount: 100,     // how many wallets to fire, from the top of the pool
     useMainWallet: true,  // prepend the MAIN wallet (MAIN_PRIVATE_KEY) to the pool
     alertChatId: null,    // falls back to mainnet ALERT_CHAT_ID at call site
@@ -34,6 +33,9 @@ export async function initRhDb() {
   db = await JSONFilePreset(dbPath, defaultData);
   // lazy-heal missing keys if an older file exists
   db.data.settings = { ...defaultData.settings, ...(db.data.settings || {}) };
+  // The old default (10) was persisted on first boot and there is no command to
+  // change it, so a stored 10 is never a user choice — lift it to the new default.
+  if (db.data.settings.freeMintMax === 10) db.data.settings.freeMintMax = defaultData.settings.freeMintMax;
   await db.write();
   return db;
 }
