@@ -37,7 +37,7 @@ function getRhTargetQty(usdPerNftRaw) {
 // RH native token is ETH (bridged), so ETH/USD is the right conversion — same
 // assumption the rh-copy-trader uses. Cached 60s.
 let ethUsdCache = null, ethUsdAt = 0;
-async function getEthUsdPrice() {
+export async function getEthUsdPrice() {
   const now = Date.now();
   if (ethUsdCache && now - ethUsdAt < 60000) return ethUsdCache;
   try {

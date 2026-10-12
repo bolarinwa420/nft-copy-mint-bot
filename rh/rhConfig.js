@@ -4,6 +4,15 @@ export const RH_RPC_URL = process.env.RH_RPC_URL || "https://rpc.mainnet.chain.r
 export const RH_CHAIN_ID = Number(process.env.RH_CHAIN_ID || 4663);
 export const RH_EXPLORER_TX = "https://robinhoodchain.blockscout.com/tx/";
 export const RH_EXPLORER_ADDR = "https://robinhoodchain.blockscout.com/address/";
+export const RH_EXPLORER_API = "https://robinhoodchain.blockscout.com/api/v2";
+
+// DEX addresses the mint diagnoser uses to price a token a whale had to buy.
+// Same deployments the rh-copy-trader trades through.
+export const RH_DEX = {
+  v2Router: "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
+  weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  usdg: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+};
 
 // How often to poll for new blocks. RH is HTTP-only (no public wss), and far less
 // contested than mainnet, so a short poll is plenty — no MEV-war latency needed.

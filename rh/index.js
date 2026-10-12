@@ -10,6 +10,7 @@ import {
 } from "./rhStore.js";
 import { initRhScanner, getRhProvider, rhScannerStatus } from "./rhScanner.js";
 import { RH_EXPLORER_ADDR, RH_CHAIN_ID } from "./rhConfig.js";
+import { diagnoseRhMint, formatRhDiagnosis } from "./rhDiagnose.js";
 
 const md = { parse_mode: "Markdown" };
 const shortAddr = a => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "?");
@@ -33,6 +34,7 @@ export async function initRh(bot, notify) {
       `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Hard cap/wallet: ${s.maxMintNative}\n` +
       `Free mints: ${s.allowFreeMints ? `yes → max ${s.freeMintMax}/wallet` : "no"}\n` +
       `Ladder ($/NFT): <0.10→10 · 0.10-0.30→3 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
+      `Failed copies: diagnosed (alert only)  |  token cap: $${s.prereqCapUsd}/wallet\n` +
       `Head block: ${st.lastBlock}  |  scanned: ${st.scannedBlocks}  |  mints seen: ${st.seenMints}`,
       md
     );
@@ -115,6 +117,27 @@ export async function initRh(bot, notify) {
     await updateRhSettings({ allowFreeMints: v === "on" }); ctx.reply(`RH free mints ${v === "on" ? "enabled" : "disabled"}`);
   });
 
+  // Explain how a wallet got a mint through: /rhdiag 0xTxHash
+  bot.command("rhdiag", async (ctx) => {
+    const h = (ctx.match || "").trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(h)) return ctx.reply("Usage: /rhdiag 0xTxHash  (a mint tx on Robinhood Chain)");
+    const provider = getRhProvider();
+    try {
+      const tx = await provider.getTransaction(h);
+      if (!tx) return ctx.reply("Tx not found on Robinhood Chain.");
+      await ctx.reply("🔎 Reading the wallet's last ~2.5h…");
+      const r = await diagnoseRhMint({ hash: h, from: tx.from, to: tx.to }, provider, { capUsd: getRhSettings().prereqCapUsd });
+      await ctx.reply(formatRhDiagnosis(r), { ...md, link_preview_options: { is_disabled: true } });
+    } catch (e) {
+      ctx.reply(`Diagnosis failed: ${e.message}`);
+    }
+  });
+  bot.command("rhprereqcap", async (ctx) => {
+    const v = Number((ctx.match || "").trim());
+    if (!(v >= 0) || (ctx.match || "").trim() === "") return ctx.reply(`Usage: /rhprereqcap 1.2  (max $ of token to buy per wallet for a mint — now $${getRhSettings().prereqCapUsd})`);
+    await updateRhSettings({ prereqCapUsd: v }); ctx.reply(`🪙 RH prerequisite-token cap = $${v} per wallet`);
+  });
+
   bot.command("rhhistory", async (ctx) => {
     const log = getRhMintLog().slice(-10).reverse();
     if (!log.length) return ctx.reply("No RH mints logged yet.");
@@ -122,5 +145,5 @@ export async function initRh(bot, notify) {
     ctx.reply(`📜 *RH mint history*\n${lines}`, md);
   });
 
-  console.log("[RH] Commands registered: /rhstatus /rhon /rhoff /rhdry /rhlive /rhtrack /rhuntrack /rhtracked /rhcap /rhgas /rhwallets /rhmain /rhfree /rhhistory");
+  console.log("[RH] Commands registered: /rhstatus /rhon /rhoff /rhdry /rhlive /rhtrack /rhuntrack /rhtracked /rhcap /rhgas /rhwallets /rhmain /rhfree /rhdiag /rhprereqcap /rhhistory");
 }

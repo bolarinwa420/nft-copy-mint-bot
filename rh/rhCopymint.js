@@ -8,6 +8,7 @@ import { getAllSigners } from "../wallets.js";
 import { getRhSettings, logRhMint } from "./rhStore.js";
 import { RH_EXPLORER_TX, RH_EXPLORER_ADDR } from "./rhConfig.js";
 import { rhAdjustQuantity, decodeRhRevert } from "./rhQty.js";
+import { diagnoseAndNotify } from "./rhDiagnose.js";
 
 // Batch sends so we don't hammer the RH RPC (which is a single public endpoint).
 const BATCH = 10;
@@ -142,6 +143,8 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
       `[whale tx](${RH_EXPLORER_TX}${whaleTx.hash}) · [contract](${RH_EXPLORER_ADDR}${to})`,
       null
     );
+    // The whale got through and we can't — go find out what they did differently.
+    diagnoseAndNotify({ whaleTx, nft: nftAddr, revert: lastRevert }, provider, notify, s.prereqCapUsd);
     return;
   }
 
@@ -232,6 +235,12 @@ export async function executeRhCopyMint(whaleTx, provider, notify) {
       `\nContract: \`${nftAddr}\``,
       null
     );
+    // Every wallet reverting in simulation is the same question as above. A pure
+    // send failure (no gas, RPC error) is not — the whale did nothing special.
+    if (reverted && !failed) {
+      const top = [...revertReasons.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      diagnoseAndNotify({ whaleTx, nft: nftAddr, revert: top }, provider, notify, s.prereqCapUsd);
+    }
     return;
   }
 
