@@ -23,9 +23,11 @@ const defaultData = {
     useMainWallet: true,  // prepend the MAIN wallet (MAIN_PRIVATE_KEY) to the pool
     alertChatId: null,    // falls back to mainnet ALERT_CHAT_ID at call site
     prereqCapUsd: 1.2,    // most we'd spend per wallet on a token a mint requires
-    prereqReplicate: true,// plan + simulate a replay of the whale's buy → burn → mint path
+    prereqReplicate: true,// replay the whale's buy → burn → mint path (main wallet only)
+    prereqDailyMax: 3,    // replays per day, so a bad day costs at most 3 × the cap
   },
   mintLog: [],        // [{ contract, wallet, txHash, valueNative, timestamp }]
+  replicated: [],     // [{ contract, timestamp }] — replays that reached the send step
 };
 
 let db;
@@ -113,3 +115,17 @@ export async function logRhMint(entry) {
 }
 
 export function getRhMintLog() { return requireDb().data.mintLog; }
+
+// --- replay attempts (rhReplicate.js) ---
+export function getRhReplicated() {
+  const d = requireDb();
+  if (!d.data.replicated) d.data.replicated = [];
+  return d.data.replicated;
+}
+
+export async function logRhReplicated(contract) {
+  const d = requireDb();
+  getRhReplicated().push({ contract: contract.toLowerCase(), timestamp: Date.now() });
+  if (d.data.replicated.length > 200) d.data.replicated = d.data.replicated.slice(-200);
+  await d.write();
+}

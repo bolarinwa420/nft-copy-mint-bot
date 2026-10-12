@@ -35,7 +35,7 @@ export async function initRh(bot, notify) {
       `Gas ceiling: ${s.gasCeilingGwei} gwei  |  Hard cap/wallet: ${s.maxMintNative}\n` +
       `Free mints: ${s.allowFreeMints ? `yes → max ${s.freeMintMax}/wallet` : "no"}\n` +
       `Ladder ($/NFT): <0.10→10 · 0.10-0.30→3 · 0.31-0.50→2 · 0.51-2.00→1 · >2→skip\n` +
-      `Failed copies: diagnosed${s.prereqReplicate ? " + replay planned (main wallet, simulated)" : " (alert only)"}  |  token cap: $${s.prereqCapUsd}\n` +
+      `Failed copies: diagnosed${s.prereqReplicate ? ` + replayed from main wallet (max ${s.prereqDailyMax}/day)` : " (alert only)"}  |  token cap: $${s.prereqCapUsd}\n` +
       `Head block: ${st.lastBlock}  |  scanned: ${st.scannedBlocks}  |  mints seen: ${st.seenMints}`,
       md
     );
@@ -135,8 +135,8 @@ export async function initRh(bot, notify) {
   });
   // Diagnose a whale's mint AND plan our copy of it: /rhcopy 0xTxHash
   bot.command("rhcopy", async (ctx) => {
-    const h = (ctx.match || "").trim().toLowerCase();
-    if (!/^0x[0-9a-f]{64}$/.test(h)) return ctx.reply("Usage: /rhcopy 0xTxHash  (a whale's mint tx on Robinhood Chain)");
+    const [h, go] = (ctx.match || "").trim().toLowerCase().split(/\s+/);
+    if (!/^0x[0-9a-f]{64}$/.test(h || "")) return ctx.reply("Usage: /rhcopy 0xTxHash  (plan only)  |  /rhcopy 0xTxHash go  (plan, then send it)");
     const provider = getRhProvider();
     const say = (text) => ctx.reply(text, { ...md, link_preview_options: { is_disabled: true } });
     try {
@@ -145,16 +145,16 @@ export async function initRh(bot, notify) {
       await ctx.reply("🔎 Tracing the whale's path and simulating ours…");
       const r = await diagnoseRhMint({ hash: h, from: tx.from, to: tx.to }, provider, { capUsd: getRhSettings().prereqCapUsd });
       await say(formatRhDiagnosis(r));
-      await replicateRhMint(r, { hash: h, from: tx.from, to: tx.to, input: tx.data, value: tx.value }, provider, say, { manual: true });
+      await replicateRhMint(r, { hash: h, from: tx.from, to: tx.to, input: tx.data, value: tx.value }, provider, say, { manual: true, send: go === "go" });
     } catch (e) {
       ctx.reply(`Replay planning failed: ${e.message}`);
     }
   });
   bot.command("rhreplicate", async (ctx) => {
     const v = (ctx.match || "").trim().toLowerCase();
-    if (v !== "on" && v !== "off") return ctx.reply("Usage: /rhreplicate on|off  (plan a replay of the whale's buy → burn → mint when our copy fails)");
+    if (v !== "on" && v !== "off") return ctx.reply("Usage: /rhreplicate on|off  (replay the whale's buy → burn → mint from the main wallet when our copy fails)");
     await updateRhSettings({ prereqReplicate: v === "on" });
-    ctx.reply(`🔁 RH replay planning ${v === "on" ? "ON" : "OFF"}`);
+    ctx.reply(`🔁 RH replay ${v === "on" ? "ON" : "OFF"}`);
   });
   bot.command("rhprereqcap", async (ctx) => {
     const v = Number((ctx.match || "").trim());

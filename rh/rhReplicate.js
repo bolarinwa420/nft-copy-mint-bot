@@ -1,19 +1,21 @@
-// Mint replay planner — takes a diagnosis (rhDiagnose.js) and rebuilds the
-// whale's whole path for the MAIN wallet: buy the token they bought, approve
-// what they approved, repeat their burn/deposit tx, then their mint.
+// Mint replicator — takes a diagnosis (rhDiagnose.js) and replays the whale's
+// whole path from the MAIN wallet: buy the token they bought, approve what they
+// approved, repeat their burn/deposit tx, then send their mint.
 //
-// READ-ONLY: this module never signs or sends. It proves the path by running the
-// entire chain in order on the node (eth_simulateV1) from our own address and
-// checking that the NFT lands in our wallet, then reports the proven plan.
+// The safety model is one rule: nothing is sent unless the ENTIRE chain, run in
+// order on the node (eth_simulateV1) from our own address, ends with the NFT
+// landing in our wallet. A path we can't reproduce costs an RPC call, not money.
+// On top of that: main wallet only, token spend held to prereqCapUsd, one replay
+// per contract, prereqDailyMax replays per day, and nothing at all in dry run.
 //
 // The token is bought the way the whale bought it: the pools are read out of
 // their buy tx (v2, v3 and v4 hops alike) and re-routed through the Universal
 // Router. If they didn't buy it inside the lookback, a plain v2 / native-v4 route
 // is tried instead.
 import { ethers } from "ethers";
-import { RH_DEX } from "./rhConfig.js";
+import { RH_DEX, RH_EXPLORER_TX } from "./rhConfig.js";
 import { getEthUsdPrice } from "./rhQty.js";
-import { getRhSettings } from "./rhStore.js";
+import { getRhSettings, getRhReplicated, logRhReplicated, logRhMint } from "./rhStore.js";
 import { diagnoseAndNotify } from "./rhDiagnose.js";
 
 const abi = ethers.AbiCoder.defaultAbiCoder();
@@ -394,29 +396,94 @@ export function formatReplication(plan, me, contract) {
   );
 }
 
-function mainAddress() {
-  try { return new ethers.Wallet(process.env.MAIN_PRIVATE_KEY).address; } catch { return null; }
+function mainSigner(provider) {
+  try { return new ethers.Wallet(process.env.MAIN_PRIVATE_KEY, provider); } catch { return null; }
 }
 
-/** Plan the replay of `whaleTx` and report it. `manual` ignores the on/off setting. */
-export async function replicateRhMint(diag, whaleTx, provider, notify, { manual = false } = {}) {
+// Current fees, clamped to the user's gas ceiling like every other RH send.
+async function gasFees(provider, ceilingGwei) {
+  let fee;
+  try { fee = await provider.getFeeData(); } catch { fee = {}; }
+  const ceiling = ethers.parseUnits(String(ceilingGwei), "gwei");
+  if (fee.maxFeePerGas) {
+    const maxFee = fee.maxFeePerGas < ceiling ? fee.maxFeePerGas : ceiling;
+    const tip = fee.maxPriorityFeePerGas && fee.maxPriorityFeePerGas < maxFee ? fee.maxPriorityFeePerGas : 0n;
+    return { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip };
+  }
+  return { gasPrice: fee.gasPrice && fee.gasPrice < ceiling ? fee.gasPrice : ceiling };
+}
+
+const day = (ts) => new Date(ts).toISOString().slice(0, 10);
+const clean = (e) => String(e.shortMessage || e.message).replace(/`/g, "'").slice(0, 200);
+
+// Send a proven plan one step at a time, each confirmed before the next.
+async function sendPlan(plan, signer, me, contract, provider, notify, s) {
+  const fees = await gasFees(provider, s.gasCeilingGwei);
+  const done = [];
+  for (const [i, step] of plan.steps.entries()) {
+    try {
+      // The plan was proven as a whole; re-check each later step against real
+      // state right before paying for it, since the drop can close under us.
+      // (Step 1 is the buy, which protects itself with a minimum-out.)
+      if (i > 0) await provider.call({ ...step.tx, from: me });
+      const resp = await signer.sendTransaction({ ...step.tx, ...fees, gasLimit: step.gasLimit });
+      const rcpt = await resp.wait(1);
+      done.push(`${i + 1}. ${step.label} · [tx](${RH_EXPLORER_TX}${resp.hash})`);
+      if (rcpt?.status !== 1) throw new Error("reverted on-chain");
+      if (i === plan.steps.length - 1) await logRhMint({ contract, wallet: me, txHash: resp.hash, valueNative: step.tx.value.toString() });
+    } catch (e) {
+      return notify(
+        `🔁 *RH replay stopped at step ${i + 1}* (${step.label})\n\`${clean(e)}\`\n` +
+        (done.length ? `\nAlready done:\n${done.join("\n")}\n\nAnything bought is still in \`${me}\`.` : "\nNothing was spent.") +
+        `\nContract: \`${contract}\``, null);
+    }
+  }
+  await notify(
+    `✅ *RH replay minted*\nWallet: \`${me}\`\n${done.join("\n")}\n` +
+    `Token: ≈ $${plan.buyUsd.toFixed(2)} · mint: ${ethers.formatEther(plan.nativeValue)} ETH\nContract: \`${contract}\``, null);
+}
+
+/**
+ * Plan the replay of `whaleTx`, report it, and — when `send` is set and the bot
+ * is live — carry it out. `manual` (someone typing /rhcopy) ignores the on/off
+ * setting and the once-per-contract / per-day limits, never the cap or the proof.
+ */
+export async function replicateRhMint(diag, whaleTx, provider, notify, { manual = false, send = true } = {}) {
   const s = getRhSettings();
   if (!manual && !s.prereqReplicate) return;
   if (!diag?.ok || !diag.needs.length || diag.nftNeeds.length) {
     if (manual) await notify("🔁 Nothing to replay — the diagnosis found no token step.", null);
     return;
   }
-  const me = mainAddress();
-  if (!me) return notify("🔁 *RH replay skipped* — no main wallet configured.", null);
+  const signer = mainSigner(provider);
+  if (!signer) return notify("🔁 *RH replay skipped* — no main wallet configured.", null);
+  const me = signer.address;
   const contract = lc(whaleTx.to);
+
+  if (!manual) {
+    const log = getRhReplicated();
+    if (log.some((e) => e.contract === contract)) return;   // one shot per contract, ever
+    if (log.filter((e) => day(e.timestamp) === day(Date.now())).length >= s.prereqDailyMax) {
+      return notify(`🔁 *RH replay skipped* — daily limit of ${s.prereqDailyMax} reached.\nContract: \`${contract}\``, null);
+    }
+  }
 
   let plan;
   try { plan = await planReplication(diag, whaleTx, provider, me, s); }
   catch (e) { plan = { ok: false, error: e.shortMessage || e.message }; }
-  await notify(formatReplication(plan, me, contract), null);
+
+  const willSend = plan.ok && send && !s.dryRun && plan.funded;
+  await notify(
+    formatReplication(plan, me, contract) +
+    (plan.ok && !willSend ? `\n_Not sent — ${!send ? "plan only" : s.dryRun ? "bot is in dry run" : "wallet is short"}._` : willSend ? "\n_Sending now…_" : ""),
+    null);
+  if (!willSend) return;
+
+  await logRhReplicated(contract);   // before the first send, so a crash can't double-spend
+  await sendPlan(plan, signer, me, contract, provider, notify, s);
 }
 
-// Hook for the executor's failure paths: explain the whale's mint, then plan the copy.
+// Hook for the executor's failure paths: explain the whale's mint, then copy it.
 export async function diagnoseAndReplicate({ whaleTx, nft, revert }, provider, notify, capUsd) {
   const diag = await diagnoseAndNotify({ whaleTx, nft, revert }, provider, notify, capUsd);
   if (!diag) return;
