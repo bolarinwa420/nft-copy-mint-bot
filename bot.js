@@ -171,6 +171,18 @@ if (process.env.RH_ENABLED === "true") {
   }
 }
 
+// ─── Ink copy-minter (opt-in, fully isolated) ────────────────────────────────
+// Same logic as rh/, copied into ink/ so the RH code stays frozen. Inert unless
+// INK_ENABLED=true; own db (INK_DB_PATH), own scanner, own executor.
+if (process.env.INK_ENABLED === "true") {
+  try {
+    const { initInk } = await import("./ink/index.js");
+    await initInk(bot, notify);
+  } catch (e) {
+    console.warn("[INK] Init failed:", e.message);
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isValidAddress(addr) {
